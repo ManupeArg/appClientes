@@ -1,0 +1,60 @@
+"use server";
+
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+
+export async function guardarNegocio(formData: FormData) {
+  const supabase = await createClient();
+  const valor = {
+    nombre: String(formData.get("nombre") ?? "MSP").trim() || "MSP",
+    cuit: String(formData.get("cuit") ?? "").trim(),
+    direccion: String(formData.get("direccion") ?? "").trim(),
+    telefono: String(formData.get("telefono") ?? "").trim(),
+    email: String(formData.get("email") ?? "").trim(),
+  };
+  const { error } = await supabase.from("configuracion").upsert({ clave: "negocio", valor, actualizado_en: new Date().toISOString() });
+  if (error) redirect("/configuracion?error=" + encodeURIComponent(error.message));
+  revalidatePath("/configuracion");
+  redirect("/configuracion?ok=" + encodeURIComponent("Datos del negocio guardados"));
+}
+
+export async function guardarAlertas(formData: FormData) {
+  const supabase = await createClient();
+  const emails = String(formData.get("emails") ?? "")
+    .split(/[\n,;]+/)
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+  const valor = { emails, activo: formData.get("activo") === "on" };
+  const { error } = await supabase.from("configuracion").upsert({ clave: "alertas_stock", valor, actualizado_en: new Date().toISOString() });
+  if (error) redirect("/configuracion?error=" + encodeURIComponent(error.message));
+  revalidatePath("/configuracion");
+  redirect("/configuracion?ok=" + encodeURIComponent(`Alertas guardadas (${emails.length} destinatario/s)`));
+}
+
+export async function actualizarUsuario(id: string, formData: FormData) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("perfiles")
+    .update({ rol: String(formData.get("rol")), activo: formData.get("activo") === "on" })
+    .eq("id", id);
+  if (error) redirect("/configuracion?error=" + encodeURIComponent(error.message));
+  revalidatePath("/configuracion");
+  redirect("/configuracion?ok=" + encodeURIComponent("Usuario actualizado"));
+}
+
+export async function enviarAlertaAhora() {
+  const base = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  try {
+    const res = await fetch(`${base}/api/cron/stock-bajo?force=1`, {
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+      cache: "no-store",
+    });
+    const json = await res.json();
+    if (!res.ok) redirect("/configuracion?error=" + encodeURIComponent(json.error ?? "Error al enviar"));
+    redirect("/configuracion?ok=" + encodeURIComponent(json.mensaje ?? "Enviado"));
+  } catch (e) {
+    if ((e as Error & { digest?: string })?.digest?.startsWith("NEXT_REDIRECT")) throw e;
+    redirect("/configuracion?error=" + encodeURIComponent("No se pudo llamar al endpoint de alertas: " + (e as Error).message));
+  }
+}

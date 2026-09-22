@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/cron/stock-bajo", "schedule": "0 11 * * *" }
+  ]
+}
