@@ -6,7 +6,6 @@ import SubmitButton from "@/components/SubmitButton";
 import { crearPago } from "@/lib/actions/pagos";
 import { formatoMoneda, formatoFecha, numeroRemito, hoyISO } from "@/lib/utils";
 import type { Cliente, RemitoSaldo, UnidadNegocio } from "@/lib/types";
-import { nombreUnidad } from "@/lib/unidades";
 
 export default function PagoForm({
   clientes,
@@ -36,11 +35,11 @@ export default function PagoForm({
     () =>
       remitosCliente.map((r) => ({
         value: r.id,
-        label: `${numeroRemito(r.numero)} · ${formatoFecha(r.fecha)} · ${nombreUnidad(unidades, r.unidad_negocio_id)}`,
+        label: `${numeroRemito(r.numero)} · ${formatoFecha(r.fecha)}`,
         sub: `debe ${formatoMoneda(r.saldo)} de ${formatoMoneda(r.total)}`,
         keywords: String(r.numero),
       })),
-    [remitosCliente, unidades]
+    [remitosCliente]
   );
 
   function elegirRemito(id: string) {

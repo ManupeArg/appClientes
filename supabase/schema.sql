@@ -430,18 +430,31 @@ create table if not exists public.unidades_negocio (
   creado_en timestamptz not null default now()
 );
 
+-- Si quedó "Venenos" de una versión anterior, pasa a llamarse Insecticida
+update public.unidades_negocio set nombre = 'Insecticida' where nombre = 'Venenos'
+  and not exists (select 1 from public.unidades_negocio where nombre = 'Insecticida');
 insert into public.unidades_negocio (nombre, color, orden) values
-  ('Venenos', '#c77800', 1),
+  ('Insecticida', '#c77800', 1),
   ('Limpieza', '#1f5eff', 2)
 on conflict (nombre) do nothing;
 
 alter table public.productos add column if not exists unidad_negocio_id uuid references public.unidades_negocio(id);
-alter table public.remitos add column if not exists unidad_negocio_id uuid references public.unidades_negocio(id);
+alter table public.remito_items add column if not exists unidad_negocio_id uuid references public.unidades_negocio(id);
 alter table public.cuenta_corriente add column if not exists unidad_negocio_id uuid references public.unidades_negocio(id);
 
 create index if not exists productos_unidad on public.productos (unidad_negocio_id);
-create index if not exists remitos_unidad on public.remitos (unidad_negocio_id);
+create index if not exists remito_items_unidad on public.remito_items (remito_id, unidad_negocio_id);
 create index if not exists cc_unidad on public.cuenta_corriente (cliente_id, unidad_negocio_id);
+
+-- Las vistas se recrean más abajo (hay que soltarlas antes de tocar columnas)
+drop view if exists public.remitos_saldo;
+drop view if exists public.remito_unidades;
+drop view if exists public.saldos_clientes_unidad;
+drop view if exists public.saldos_clientes;
+drop view if exists public.productos_stock_bajo;
+
+-- De una versión intermedia: la unidad estaba en el remito; ahora va por ítem
+alter table public.remitos drop column if exists unidad_negocio_id;
 
 -- ------------------------------------------------------------
 -- 2. Pagos aplicados a un remito
@@ -452,7 +465,6 @@ create index if not exists pagos_remito on public.pagos (remito_id);
 -- ------------------------------------------------------------
 -- 3. Cantidades enteras
 -- ------------------------------------------------------------
-drop view if exists public.productos_stock_bajo;   -- se vuelve a crear más abajo
 alter table public.remito_items alter column cantidad type integer using round(cantidad)::integer;
 alter table public.productos alter column stock type integer using round(stock)::integer;
 alter table public.productos alter column stock_minimo type integer using round(stock_minimo)::integer;
@@ -468,7 +480,6 @@ alter table public.cuenta_corriente alter column fecha set default public.hoy_ar
 -- ------------------------------------------------------------
 -- 5. Vistas
 -- ------------------------------------------------------------
-drop view if exists public.saldos_clientes;
 create view public.saldos_clientes with (security_invoker = true) as
 select
   c.id as cliente_id,
@@ -483,7 +494,7 @@ left join public.cuenta_corriente cc on cc.cliente_id = c.id
 group by c.id;
 
 -- Saldo de cada cliente separado por unidad de negocio
-create or replace view public.saldos_clientes_unidad with (security_invoker = true) as
+create view public.saldos_clientes_unidad with (security_invoker = true) as
 select
   cc.cliente_id,
   cc.unidad_negocio_id,
@@ -495,8 +506,15 @@ from public.cuenta_corriente cc
 left join public.unidades_negocio u on u.id = cc.unidad_negocio_id
 group by cc.cliente_id, cc.unidad_negocio_id, u.nombre;
 
+-- Cuánto de cada remito corresponde a cada unidad (ya con el descuento prorrateado)
+create view public.remito_unidades with (security_invoker = true) as
+select cc.remito_id, cc.unidad_negocio_id, u.nombre as unidad_nombre, u.color, cc.debe as importe
+from public.cuenta_corriente cc
+left join public.unidades_negocio u on u.id = cc.unidad_negocio_id
+where cc.tipo = 'remito';
+
 -- Cada remito con lo pagado y lo pendiente
-create or replace view public.remitos_saldo with (security_invoker = true) as
+create view public.remitos_saldo with (security_invoker = true) as
 select
   r.*,
   coalesce(p.pagado, 0) as pagado,
@@ -520,22 +538,64 @@ where p.activo and p.alerta_stock and p.stock <= p.stock_minimo
 order by (p.stock - p.stock_minimo), p.nombre;
 
 -- ------------------------------------------------------------
--- 6. Triggers y funciones (reemplazan a las anteriores)
+-- 6. Triggers y funciones
 -- ------------------------------------------------------------
 
--- Remito → cuenta corriente (con unidad de negocio); anulación bloqueada si tiene pagos
+-- Reparte un importe entre las unidades de un remito, proporcional a lo que cada una vendió.
+-- Devuelve (unidad_negocio_id, importe) y garantiza que la suma sea exactamente p_importe.
+create or replace function public.repartir_por_unidad(p_remito_id uuid, p_importe numeric)
+returns table (unidad_negocio_id uuid, importe numeric)
+language plpgsql stable security definer set search_path = public as $$
+declare
+  total_items numeric;
+  acumulado numeric := 0;
+  n int;
+  i int := 0;
+  rec record;
+begin
+  select coalesce(sum(subtotal), 0), count(distinct coalesce(i.unidad_negocio_id::text, ''))
+    into total_items, n from public.remito_items i where remito_id = p_remito_id;
+  if n = 0 or total_items = 0 then
+    unidad_negocio_id := null; importe := p_importe; return next; return;
+  end if;
+  for rec in
+    select i.unidad_negocio_id as uid, sum(i.subtotal) as sub
+    from public.remito_items i where remito_id = p_remito_id
+    group by i.unidad_negocio_id order by i.unidad_negocio_id nulls last
+  loop
+    i := i + 1;
+    unidad_negocio_id := rec.uid;
+    if i = n then
+      importe := round(p_importe - acumulado, 2);        -- la última absorbe el redondeo
+    else
+      importe := round(p_importe * rec.sub / total_items, 2);
+      acumulado := acumulado + importe;
+    end if;
+    return next;
+  end loop;
+end $$;
+
+-- Reconstruye los renglones "remito" de la cuenta corriente (uno por unidad)
+create or replace function public.rearmar_cc_remito(p_remito_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare r public.remitos%rowtype;
+begin
+  select * into r from public.remitos where id = p_remito_id;
+  if not found or r.estado <> 'emitido' then return; end if;
+  delete from public.cuenta_corriente where remito_id = p_remito_id and tipo = 'remito';
+  insert into public.cuenta_corriente (cliente_id, fecha, tipo, descripcion, debe, remito_id, unidad_negocio_id)
+  select r.cliente_id, r.fecha, 'remito', 'Remito N° ' || r.numero, x.importe, r.id, x.unidad_negocio_id
+  from public.repartir_por_unidad(r.id, r.total) x
+  where x.importe <> 0;
+end $$;
+
+-- Remito → cuenta corriente; anulación bloqueada si tiene pagos
 create or replace function public.remito_cuenta_corriente()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if tg_op = 'UPDATE' then
-    if new.estado = 'emitido' and (new.total <> old.total or new.unidad_negocio_id is distinct from old.unidad_negocio_id) then
-      update public.cuenta_corriente
-        set debe = new.total, unidad_negocio_id = new.unidad_negocio_id
-        where remito_id = new.id and tipo = 'remito';
-      if not found then
-        insert into public.cuenta_corriente (cliente_id, fecha, tipo, descripcion, debe, remito_id, unidad_negocio_id)
-        values (new.cliente_id, new.fecha, 'remito', 'Remito N° ' || new.numero, new.total, new.id, new.unidad_negocio_id);
-      end if;
+    if new.estado = 'emitido' and new.total <> old.total then
+      perform public.rearmar_cc_remito(new.id);
     end if;
 
     if new.estado = 'anulado' and old.estado = 'emitido' then
@@ -544,7 +604,8 @@ begin
       end if;
 
       insert into public.cuenta_corriente (cliente_id, fecha, tipo, descripcion, haber, remito_id, unidad_negocio_id)
-      values (new.cliente_id, public.hoy_ar(), 'anulacion_remito', 'Anulación remito N° ' || new.numero, new.total, new.id, new.unidad_negocio_id);
+      select new.cliente_id, public.hoy_ar(), 'anulacion_remito', 'Anulación remito N° ' || new.numero, x.importe, new.id, x.unidad_negocio_id
+      from public.repartir_por_unidad(new.id, new.total) x where x.importe <> 0;
 
       insert into public.movimientos_stock (producto_id, cantidad, tipo, referencia_id, descripcion, usuario_id)
       select producto_id, cantidad, 'anulacion_remito', new.id, 'Anulación remito N° ' || new.numero, new.usuario_id
@@ -557,11 +618,15 @@ begin
   return new;
 end $$;
 
--- Pago → cuenta corriente; valida remito y que no supere lo pendiente
+drop trigger if exists trg_remito_cc on public.remitos;
+create trigger trg_remito_cc after update on public.remitos
+  for each row execute function public.remito_cuenta_corriente();
+
+-- Pago → cuenta corriente, repartido entre las unidades del remito; no puede superar lo pendiente
 create or replace function public.pago_cuenta_corriente()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare
-  r record;
+  r public.remitos%rowtype;
   pendiente numeric;
 begin
   if tg_op = 'INSERT' then
@@ -576,26 +641,32 @@ begin
         raise exception 'El pago (%) supera lo pendiente del remito (%)', new.monto, pendiente;
       end if;
       insert into public.cuenta_corriente (cliente_id, fecha, tipo, descripcion, haber, pago_id, remito_id, unidad_negocio_id)
-      values (new.cliente_id, new.fecha, 'pago',
-              'Pago remito N° ' || r.numero || ' (' || new.medio || ')' || coalesce(' · ' || new.referencia, ''),
-              new.monto, new.id, new.remito_id, r.unidad_negocio_id);
+      select new.cliente_id, new.fecha, 'pago',
+             'Pago remito N° ' || r.numero || ' (' || new.medio || ')' || coalesce(' · ' || new.referencia, ''),
+             x.importe, new.id, new.remito_id, x.unidad_negocio_id
+      from public.repartir_por_unidad(new.remito_id, new.monto) x where x.importe <> 0;
     else
       insert into public.cuenta_corriente (cliente_id, fecha, tipo, descripcion, haber, pago_id)
       values (new.cliente_id, new.fecha, 'pago', 'Pago a cuenta (' || new.medio || ')' || coalesce(' · ' || new.referencia, ''), new.monto, new.id);
     end if;
   elsif tg_op = 'UPDATE' and new.anulado and not old.anulado then
+    -- contra-asiento espejo de lo que se había acreditado
     insert into public.cuenta_corriente (cliente_id, fecha, tipo, descripcion, debe, pago_id, remito_id, unidad_negocio_id)
-    select new.cliente_id, public.hoy_ar(), 'anulacion_pago', 'Anulación de pago', new.monto, new.id, new.remito_id,
-           (select unidad_negocio_id from public.remitos where id = new.remito_id);
+    select cc.cliente_id, public.hoy_ar(), 'anulacion_pago', 'Anulación de pago', cc.haber, new.id, cc.remito_id, cc.unidad_negocio_id
+    from public.cuenta_corriente cc where cc.pago_id = new.id and cc.tipo = 'pago';
   end if;
   return new;
 end $$;
 
--- Crear remito: unidad de negocio obligatoria, fecha automática, cantidades enteras
+drop trigger if exists trg_pago_cc on public.pagos;
+create trigger trg_pago_cc after insert or update on public.pagos
+  for each row execute function public.pago_cuenta_corriente();
+
+-- Crear remito: cada ítem toma la unidad de negocio de su producto; fecha automática; enteros
 drop function if exists public.crear_remito(uuid, date, text, numeric, text, jsonb);
+drop function if exists public.crear_remito(uuid, uuid, text, numeric, text, jsonb);
 create or replace function public.crear_remito(
   p_cliente_id uuid,
-  p_unidad_negocio_id uuid,
   p_tipo_precio text,
   p_descuento numeric,
   p_observaciones text,
@@ -609,27 +680,24 @@ declare
   cant integer;
 begin
   if not public.es_usuario_activo() then raise exception 'No autorizado'; end if;
-  if p_unidad_negocio_id is null then raise exception 'Elegí la unidad de negocio'; end if;
   if jsonb_array_length(p_items) = 0 then raise exception 'El remito no tiene ítems'; end if;
 
-  insert into public.remitos (cliente_id, fecha, unidad_negocio_id, tipo_precio, descuento, observaciones, usuario_id)
-  values (p_cliente_id, public.hoy_ar(), p_unidad_negocio_id, p_tipo_precio, coalesce(p_descuento, 0), p_observaciones, auth.uid())
+  insert into public.remitos (cliente_id, fecha, tipo_precio, descuento, observaciones, usuario_id)
+  values (p_cliente_id, public.hoy_ar(), p_tipo_precio, coalesce(p_descuento, 0), p_observaciones, auth.uid())
   returning id into rid;
 
   for it in select * from jsonb_array_elements(p_items) loop
     select * into prod from public.productos where id = (it->>'producto_id')::uuid;
     if not found then raise exception 'Producto inexistente'; end if;
-    if prod.unidad_negocio_id is not null and prod.unidad_negocio_id <> p_unidad_negocio_id then
-      raise exception 'El producto "%" pertenece a otra unidad de negocio', prod.nombre;
-    end if;
     cant := (it->>'cantidad')::integer;
     if cant <= 0 then raise exception 'La cantidad de "%" debe ser mayor a 0', prod.nombre; end if;
-    insert into public.remito_items (remito_id, producto_id, descripcion, cantidad, precio_unitario, subtotal)
+    insert into public.remito_items (remito_id, producto_id, descripcion, cantidad, precio_unitario, subtotal, unidad_negocio_id)
     values (rid, prod.id, prod.nombre, cant, (it->>'precio_unitario')::numeric,
-            round(cant * (it->>'precio_unitario')::numeric, 2));
+            round(cant * (it->>'precio_unitario')::numeric, 2), prod.unidad_negocio_id);
   end loop;
 
   update public.remitos set total = subtotal - descuento where id = rid;
+  perform public.rearmar_cc_remito(rid);   -- por si el total no cambió (p.ej. total 0)
   return rid;
 end $$;
 
@@ -655,27 +723,33 @@ begin
   return n;
 end $$;
 
--- Completar la unidad de negocio en remitos viejos (cuando todos sus productos son de la misma unidad)
-create or replace function public.completar_unidad_remitos()
+-- Recalcular la cuenta corriente de los remitos viejos con la unidad actual de cada producto.
+-- Sirve después de asignar unidades a los productos: rearma los renglones de remitos y pagos.
+drop function if exists public.completar_unidad_remitos();
+create or replace function public.recalcular_unidades_remitos()
 returns int language plpgsql security definer set search_path = public as $$
-declare n int;
+declare n int; rid uuid; pg record;
 begin
   if not public.es_admin() then raise exception 'Solo administradores'; end if;
-  with calc as (
-    select r.id, min(p.unidad_negocio_id::text)::uuid as unidad
-    from public.remitos r
-    join public.remito_items i on i.remito_id = r.id
-    join public.productos p on p.id = i.producto_id
-    where r.unidad_negocio_id is null
-    group by r.id
-    having count(distinct p.unidad_negocio_id) = 1 and bool_and(p.unidad_negocio_id is not null)
-  )
-  update public.remitos r set unidad_negocio_id = calc.unidad from calc where calc.id = r.id;
+
+  -- 1) ítems sin unidad toman la del producto
+  update public.remito_items i set unidad_negocio_id = p.unidad_negocio_id
+  from public.productos p where p.id = i.producto_id and i.unidad_negocio_id is null and p.unidad_negocio_id is not null;
   get diagnostics n = row_count;
 
-  -- propagar a la cuenta corriente
-  update public.cuenta_corriente cc set unidad_negocio_id = r.unidad_negocio_id
-  from public.remitos r where cc.remito_id = r.id and cc.unidad_negocio_id is null and r.unidad_negocio_id is not null;
+  -- 2) rearmar renglones de remito y de pago de los remitos que tenían renglones sin unidad
+  for rid in
+    select distinct remito_id from public.cuenta_corriente where remito_id is not null and unidad_negocio_id is null
+  loop
+    perform public.rearmar_cc_remito(rid);
+    for pg in select p.* from public.pagos p where p.remito_id = rid and not p.anulado loop
+      delete from public.cuenta_corriente where pago_id = pg.id and tipo = 'pago';
+      insert into public.cuenta_corriente (cliente_id, fecha, tipo, descripcion, haber, pago_id, remito_id, unidad_negocio_id)
+      select pg.cliente_id, pg.fecha, 'pago', 'Pago remito (' || pg.medio || ')' || coalesce(' · ' || pg.referencia, ''),
+             x.importe, pg.id, rid, x.unidad_negocio_id
+      from public.repartir_por_unidad(rid, pg.monto) x where x.importe <> 0;
+    end loop;
+  end loop;
   return n;
 end $$;
 

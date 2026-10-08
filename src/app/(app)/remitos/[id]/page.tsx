@@ -6,22 +6,25 @@ import EstadoPagoBadge from "@/components/EstadoPagoBadge";
 import { createClient } from "@/lib/supabase/server";
 import { anularRemito } from "@/lib/actions/remitos";
 import { anularPago } from "@/lib/actions/pagos";
-import { getUnidades, nombreUnidad } from "@/lib/unidades";
+import { getUnidades } from "@/lib/unidades";
+import UnidadesChips from "@/components/UnidadesChips";
 import { formatoMoneda, formatoNumero, formatoFecha, numeroRemito } from "@/lib/utils";
-import type { Pago, RemitoSaldo } from "@/lib/types";
+import type { Pago, RemitoSaldo, RemitoUnidad } from "@/lib/types";
 
 export default async function RemitoDetallePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; ok?: string }> }) {
   const { id } = await params;
   const sp = await searchParams;
   const supabase = await createClient();
-  const [{ data: remitoData }, { data: items }, { data: config }, { data: pagosData }, unidades] = await Promise.all([
+  const [{ data: remitoData }, { data: items }, { data: config }, { data: pagosData }, unidades, { data: partesData }] = await Promise.all([
     supabase.from("remitos_saldo").select("*, clientes(*)").eq("id", id).single(),
     supabase.from("remito_items").select("*, productos(codigo, unidad)").eq("remito_id", id).order("descripcion"),
     supabase.from("configuracion").select("valor").eq("clave", "negocio").single(),
     supabase.from("pagos").select("*").eq("remito_id", id).order("creado_en"),
     getUnidades(supabase, false),
+    supabase.from("remito_unidades").select("*").eq("remito_id", id),
   ]);
   if (!remitoData) notFound();
+  const partes = (partesData ?? []) as RemitoUnidad[];
   const remito = remitoData as RemitoSaldo & { clientes: { nombre: string; cuit: string | null; direccion: string | null; localidad: string | null; telefono: string | null } };
   const cliente = remito.clientes;
   const pagos = (pagosData ?? []) as Pago[];
@@ -97,7 +100,6 @@ export default async function RemitoDetallePage({ params, searchParams }: { para
             <div className="text-xs uppercase font-bold tracking-wide" style={{ color: "var(--muted)" }}>Remito</div>
             <div className="text-2xl font-bold">{numeroRemito(remito.numero)}</div>
             <div className="text-sm">{formatoFecha(remito.fecha)}</div>
-            <div className="text-xs" style={{ color: "var(--muted)" }}>{nombreUnidad(unidades, remito.unidad_negocio_id)}</div>
             {remito.estado === "anulado" && <div className="badge badge-danger mt-1">ANULADO</div>}
           </div>
         </div>
@@ -118,7 +120,7 @@ export default async function RemitoDetallePage({ params, searchParams }: { para
 
         <table className="table mb-4">
           <thead>
-            <tr><th>Código</th><th>Descripción</th><th className="num">Cant.</th><th className="num">P. unitario</th><th className="num">Subtotal</th></tr>
+            <tr><th>Código</th><th>Descripción</th><th className="no-print">Unidad</th><th className="num">Cant.</th><th className="num">P. unitario</th><th className="num">Subtotal</th></tr>
           </thead>
           <tbody>
             {(items ?? []).map((it) => {
@@ -127,6 +129,7 @@ export default async function RemitoDetallePage({ params, searchParams }: { para
                 <tr key={it.id}>
                   <td className="text-xs" style={{ color: "var(--muted)" }}>{prod?.codigo}</td>
                   <td>{it.descripcion}</td>
+                  <td className="no-print text-xs" style={{ color: "var(--muted)" }}>{unidades.find((u) => u.id === it.unidad_negocio_id)?.nombre ?? "—"}</td>
                   <td className="num">{formatoNumero(it.cantidad)} {prod?.unidad}</td>
                   <td className="num">{formatoMoneda(it.precio_unitario)}</td>
                   <td className="num">{formatoMoneda(it.subtotal)}</td>
@@ -141,6 +144,9 @@ export default async function RemitoDetallePage({ params, searchParams }: { para
             <div className="flex justify-between"><span>Subtotal</span><span>{formatoMoneda(remito.subtotal)}</span></div>
             {Number(remito.descuento) > 0 && <div className="flex justify-between"><span>Descuento</span><span>- {formatoMoneda(remito.descuento)}</span></div>}
             <div className="flex justify-between text-lg font-bold border-t pt-1" style={{ borderColor: "var(--border)" }}><span>Total</span><span>{formatoMoneda(remito.total)}</span></div>
+            {partes.length > 0 && (
+              <div className="no-print pt-2 text-right"><UnidadesChips unidades={unidades} partes={partes} /></div>
+            )}
           </div>
         </div>
 

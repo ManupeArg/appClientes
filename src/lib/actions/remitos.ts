@@ -12,7 +12,6 @@ export interface ItemNuevo {
 
 export async function crearRemito(datos: {
   cliente_id: string;
-  unidad_negocio_id: string;
   tipo_precio: "minorista" | "mayorista";
   descuento: number;
   observaciones: string;
@@ -20,7 +19,6 @@ export async function crearRemito(datos: {
 }): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const supabase = await createClient();
   if (!datos.cliente_id) return { ok: false, error: "Elegí un cliente" };
-  if (!datos.unidad_negocio_id) return { ok: false, error: "Elegí la unidad de negocio" };
   const items = datos.items
     .filter((i) => i.producto_id && i.cantidad > 0)
     .map((i) => ({ ...i, cantidad: Math.floor(i.cantidad) }));
@@ -29,7 +27,6 @@ export async function crearRemito(datos: {
 
   const { data, error } = await supabase.rpc("crear_remito", {
     p_cliente_id: datos.cliente_id,
-    p_unidad_negocio_id: datos.unidad_negocio_id,
     p_tipo_precio: datos.tipo_precio,
     p_descuento: datos.descuento || 0,
     p_observaciones: datos.observaciones || null,

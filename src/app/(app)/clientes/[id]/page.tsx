@@ -9,7 +9,8 @@ import { createClient } from "@/lib/supabase/server";
 import { anularPago } from "@/lib/actions/pagos";
 import { getUnidades } from "@/lib/unidades";
 import { formatoMoneda, formatoFecha, numeroRemito } from "@/lib/utils";
-import type { MovimientoCC, RemitoSaldo } from "@/lib/types";
+import type { MovimientoCC, RemitoSaldo, RemitoUnidad } from "@/lib/types";
+import UnidadesChips from "@/components/UnidadesChips";
 
 export default async function ClienteDetallePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; ok?: string; unidad?: string }> }) {
   const { id } = await params;
@@ -23,6 +24,8 @@ export default async function ClienteDetallePage({ params, searchParams }: { par
     getUnidades(supabase, false),
   ]);
   if (!cliente) notFound();
+  const { data: partesData } = await supabase.from("remito_unidades").select("*").in("remito_id", (remitosData ?? []).map((r) => r.id));
+  const partes = (partesData ?? []) as RemitoUnidad[];
 
   const todosMov = (movimientos ?? []) as MovimientoCC[];
   const movs = sp.unidad ? todosMov.filter((m) => m.unidad_negocio_id === sp.unidad) : todosMov;
@@ -33,7 +36,7 @@ export default async function ClienteDetallePage({ params, searchParams }: { par
   });
   const totalDebe = filas.reduce((a, m) => a + Number(m.debe), 0);
   const totalHaber = filas.reduce((a, m) => a + Number(m.haber), 0);
-  const remitos = ((remitosData ?? []) as RemitoSaldo[]).filter((r) => !sp.unidad || r.unidad_negocio_id === sp.unidad);
+  const remitos = ((remitosData ?? []) as RemitoSaldo[]).filter((r) => !sp.unidad || partes.some((p) => p.remito_id === r.id && p.unidad_negocio_id === sp.unidad));
   const saldoTotal = todosMov.reduce((a, m) => a + Number(m.debe) - Number(m.haber), 0);
   const saldoDe = (uid: string | null) => Number((saldosUnidad ?? []).find((s) => (s.unidad_negocio_id ?? null) === uid)?.saldo ?? 0);
   const saldoSinUnidad = saldoDe(null);
@@ -41,7 +44,7 @@ export default async function ClienteDetallePage({ params, searchParams }: { par
   return (
     <>
       <PageHeader titulo={cliente.nombre} subtitulo={[cliente.localidad, cliente.telefono, cliente.email].filter(Boolean).join(" · ")}>
-        <Link href={`/remitos/nuevo?cliente=${id}${sp.unidad ? `&unidad=${sp.unidad}` : ""}`} className="btn btn-primary">+ Remito</Link>
+        <Link href={`/remitos/nuevo?cliente=${id}`} className="btn btn-primary">+ Remito</Link>
         <Link href={`/pagos/nuevo?cliente=${id}`} className="btn btn-secondary">+ Pago</Link>
         <Link href={`/clientes/${id}/editar`} className="btn btn-secondary">Editar</Link>
       </PageHeader>
@@ -78,13 +81,13 @@ export default async function ClienteDetallePage({ params, searchParams }: { par
       <h2 className="font-semibold mb-2">Remitos</h2>
       <div className="card p-0 overflow-x-auto mb-6">
         <table className="table">
-          <thead><tr><th>N°</th><th>Fecha</th><th>Unidad</th><th className="num">Total</th><th className="num">Pagado</th><th className="num">Pendiente</th><th>Estado</th><th></th></tr></thead>
+          <thead><tr><th>N°</th><th>Fecha</th><th>Unidades</th><th className="num">Total</th><th className="num">Pagado</th><th className="num">Pendiente</th><th>Estado</th><th></th></tr></thead>
           <tbody>
             {remitos.map((r) => (
               <tr key={r.id}>
                 <td><Link className="underline font-medium" href={`/remitos/${r.id}`}>{numeroRemito(r.numero)}</Link></td>
                 <td>{formatoFecha(r.fecha)}</td>
-                <td><UnidadBadge unidades={unidades} id={r.unidad_negocio_id} /></td>
+                <td><UnidadesChips unidades={unidades} partes={partes.filter((p) => p.remito_id === r.id)} /></td>
                 <td className="num">{formatoMoneda(r.total)}</td>
                 <td className="num" style={{ color: "var(--ok)" }}>{Number(r.pagado) ? formatoMoneda(r.pagado) : ""}</td>
                 <td className="num font-semibold" style={{ color: Number(r.saldo) > 0 ? "var(--warn)" : undefined }}>{Number(r.saldo) > 0 ? formatoMoneda(r.saldo) : ""}</td>

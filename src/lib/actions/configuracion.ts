@@ -77,10 +77,10 @@ export async function guardarUnidad(formData: FormData) {
   redirect("/configuracion?ok=" + encodeURIComponent("Unidad de negocio guardada"));
 }
 
-export async function completarUnidadRemitos() {
+export async function recalcularUnidadesRemitos() {
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("completar_unidad_remitos");
+  const { data, error } = await supabase.rpc("recalcular_unidades_remitos");
   if (error) redirect("/configuracion?error=" + encodeURIComponent(error.message));
   revalidatePath("/", "layout");
-  redirect("/configuracion?ok=" + encodeURIComponent(`Se completó la unidad de negocio en ${data} remito/s viejos`));
+  redirect("/configuracion?ok=" + encodeURIComponent(`Listo: ${data} renglón/es de remitos viejos tomaron la unidad de su producto y se rearmó la cuenta corriente`));
 }

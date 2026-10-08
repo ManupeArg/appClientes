@@ -2,7 +2,7 @@ import PageHeader from "@/components/PageHeader";
 import Mensaje from "@/components/Mensaje";
 import SubmitButton from "@/components/SubmitButton";
 import { createClient } from "@/lib/supabase/server";
-import { guardarNegocio, guardarAlertas, actualizarUsuario, enviarAlertaAhora, guardarUnidad, completarUnidadRemitos } from "@/lib/actions/configuracion";
+import { guardarNegocio, guardarAlertas, actualizarUsuario, enviarAlertaAhora, guardarUnidad, recalcularUnidadesRemitos } from "@/lib/actions/configuracion";
 import { getUnidades } from "@/lib/unidades";
 import { formatoFecha } from "@/lib/utils";
 import type { Perfil } from "@/lib/types";
@@ -17,7 +17,7 @@ export default async function ConfiguracionPage({ searchParams }: { searchParams
     supabase.from("alertas_enviadas").select("*").order("enviado_en", { ascending: false }).limit(10),
     supabase.from("perfiles").select("rol").eq("id", user!.id).single(),
     getUnidades(supabase, false),
-    supabase.from("remitos").select("id", { count: "exact", head: true }).is("unidad_negocio_id", null),
+    supabase.from("cuenta_corriente").select("id", { count: "exact", head: true }).eq("tipo", "remito").is("unidad_negocio_id", null),
   ]);
   const esAdmin = yo?.rol === "admin";
   const negocio = (config?.find((c) => c.clave === "negocio")?.valor ?? {}) as Record<string, string>;
@@ -32,7 +32,7 @@ export default async function ConfiguracionPage({ searchParams }: { searchParams
         <div className="card space-y-3">
           <div>
             <h2 className="font-semibold">Unidades de negocio</h2>
-            <p className="text-sm" style={{ color: "var(--muted)" }}>Cada producto y cada remito pertenecen a una unidad. Las ventas y la deuda se ven separadas por unidad.</p>
+            <p className="text-sm" style={{ color: "var(--muted)" }}>Cada producto pertenece a una unidad. Un remito puede mezclar productos de varias: la cuenta corriente se parte sola, y los pagos se reparten en proporción.</p>
           </div>
           <table className="table">
             <thead><tr><th>Nombre</th><th>Color</th><th>Orden</th><th>Activa</th><th></th></tr></thead>
@@ -74,10 +74,10 @@ export default async function ConfiguracionPage({ searchParams }: { searchParams
           )}
           {(remitosSinUnidad ?? 0) > 0 && (
             <div className="alert-error flex flex-wrap items-center justify-between gap-2">
-              <span>Hay {remitosSinUnidad} remitos viejos sin unidad de negocio.</span>
+              <span>Hay {remitosSinUnidad} remitos viejos con importes sin unidad de negocio. Primero asigná unidad a los productos y después:</span>
               {esAdmin && (
-                <form action={completarUnidadRemitos}>
-                  <SubmitButton className="btn btn-secondary btn-sm">Completar según sus productos</SubmitButton>
+                <form action={recalcularUnidadesRemitos}>
+                  <SubmitButton className="btn btn-secondary btn-sm">Recalcular cuenta corriente</SubmitButton>
                 </form>
               )}
             </div>

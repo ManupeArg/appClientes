@@ -2,7 +2,7 @@ import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import Mensaje from "@/components/Mensaje";
 import FiltroUnidad from "@/components/FiltroUnidad";
-import UnidadBadge from "@/components/UnidadBadge";
+import UnidadesChips from "@/components/UnidadesChips";
 import { createClient } from "@/lib/supabase/server";
 import { getUnidades } from "@/lib/unidades";
 import { formatoMoneda, formatoFecha, numeroRemito } from "@/lib/utils";
@@ -13,16 +13,18 @@ export default async function PagosPage({ searchParams }: { searchParams: Promis
   const unidades = await getUnidades(supabase, false);
   let query = supabase
     .from("pagos")
-    .select("*, clientes(nombre), remitos(numero, unidad_negocio_id)")
+    .select("*, clientes(nombre), remitos(numero)")
     .order("fecha", { ascending: false })
     .order("creado_en", { ascending: false })
     .limit(300);
   if (sp.desde) query = query.gte("fecha", sp.desde);
   if (sp.hasta) query = query.lte("fecha", sp.hasta);
   const { data } = await query;
-  type Fila = { id: string; cliente_id: string; remito_id: string | null; fecha: string; monto: number; medio: string; referencia: string | null; anulado: boolean; clientes: { nombre: string } | null; remitos: { numero: number; unidad_negocio_id: string | null } | null };
+  type Fila = { id: string; cliente_id: string; remito_id: string | null; fecha: string; monto: number; medio: string; referencia: string | null; anulado: boolean; clientes: { nombre: string } | null; remitos: { numero: number } | null };
   let pagos = (data ?? []) as unknown as Fila[];
-  if (sp.unidad) pagos = pagos.filter((p) => p.remitos?.unidad_negocio_id === sp.unidad);
+  const { data: lineas } = await supabase.from("cuenta_corriente").select("pago_id, unidad_negocio_id, haber").eq("tipo", "pago").in("pago_id", pagos.map((p) => p.id));
+  const partesDe = (pid: string) => (lineas ?? []).filter((l) => l.pago_id === pid).map((l) => ({ unidad_negocio_id: l.unidad_negocio_id as string | null, importe: Number(l.haber) }));
+  if (sp.unidad) pagos = pagos.filter((p) => partesDe(p.id).some((x) => x.unidad_negocio_id === sp.unidad));
   const total = pagos.filter((p) => !p.anulado).reduce((a, p) => a + Number(p.monto), 0);
 
   return (
@@ -42,14 +44,14 @@ export default async function PagosPage({ searchParams }: { searchParams: Promis
       </div>
       <div className="card p-0 overflow-x-auto">
         <table className="table">
-          <thead><tr><th>Fecha</th><th>Cliente</th><th>Remito</th><th>Unidad</th><th>Medio</th><th>Referencia</th><th className="num">Monto</th><th></th></tr></thead>
+          <thead><tr><th>Fecha</th><th>Cliente</th><th>Remito</th><th>Unidades</th><th>Medio</th><th>Referencia</th><th className="num">Monto</th><th></th></tr></thead>
           <tbody>
             {pagos.map((p) => (
               <tr key={p.id} style={{ opacity: p.anulado ? 0.5 : 1 }}>
                 <td>{formatoFecha(p.fecha)}</td>
                 <td><Link className="underline" href={`/clientes/${p.cliente_id}`}>{p.clientes?.nombre}</Link></td>
                 <td>{p.remito_id && p.remitos ? <Link className="underline" href={`/remitos/${p.remito_id}`}>{numeroRemito(p.remitos.numero)}</Link> : <span style={{ color: "var(--muted)" }}>a cuenta</span>}</td>
-                <td><UnidadBadge unidades={unidades} id={p.remitos?.unidad_negocio_id} /></td>
+                <td><UnidadesChips unidades={unidades} partes={partesDe(p.id)} /></td>
                 <td className="capitalize">{p.medio}</td>
                 <td className="text-sm">{p.referencia}</td>
                 <td className="num font-semibold">{formatoMoneda(p.monto)}</td>

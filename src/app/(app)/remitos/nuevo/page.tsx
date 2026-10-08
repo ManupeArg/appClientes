@@ -3,7 +3,7 @@ import RemitoForm from "@/components/RemitoForm";
 import { createClient } from "@/lib/supabase/server";
 import { getUnidades } from "@/lib/unidades";
 
-export default async function NuevoRemitoPage({ searchParams }: { searchParams: Promise<{ cliente?: string; unidad?: string }> }) {
+export default async function NuevoRemitoPage({ searchParams }: { searchParams: Promise<{ cliente?: string }> }) {
   const sp = await searchParams;
   const supabase = await createClient();
   const [{ data: clientes }, { data: productos }, unidades] = await Promise.all([
@@ -14,7 +14,7 @@ export default async function NuevoRemitoPage({ searchParams }: { searchParams: 
   return (
     <>
       <PageHeader titulo="Nuevo remito" subtitulo="Al emitirlo se descuenta el stock y se carga en la cuenta corriente del cliente" />
-      <RemitoForm clientes={clientes ?? []} productos={productos ?? []} unidades={unidades} clienteInicial={sp.cliente} unidadInicial={sp.unidad} />
+      <RemitoForm clientes={clientes ?? []} productos={productos ?? []} unidades={unidades} clienteInicial={sp.cliente} />
     </>
   );
 }

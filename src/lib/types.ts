@@ -51,7 +51,6 @@ export interface Remito {
   id: string;
   numero: number;
   cliente_id: string;
-  unidad_negocio_id: string | null;
   fecha: string;
   tipo_precio: TipoPrecio;
   subtotal: number;
@@ -76,6 +75,15 @@ export interface RemitoItem {
   cantidad: number;
   precio_unitario: number;
   subtotal: number;
+  unidad_negocio_id: string | null;
+}
+
+export interface RemitoUnidad {
+  remito_id: string;
+  unidad_negocio_id: string | null;
+  unidad_nombre: string | null;
+  color: string | null;
+  importe: number;
 }
 
 export interface Pago {

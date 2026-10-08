@@ -15,18 +15,19 @@ export default async function InicioPage() {
     supabase.from("saldos_clientes_unidad").select("unidad_negocio_id, saldo"),
     supabase.from("saldos_clientes").select("*").gt("saldo", 0).order("saldo", { ascending: false }).limit(8),
     supabase.from("productos_stock_bajo").select("*").limit(10),
-    supabase.from("remitos_saldo").select("id, numero, fecha, total, saldo, estado_pago, unidad_negocio_id, clientes(nombre)").order("creado_en", { ascending: false }).limit(6),
+    supabase.from("remitos_saldo").select("id, numero, fecha, total, saldo, estado_pago, clientes(nombre)").order("creado_en", { ascending: false }).limit(6),
     supabase.from("pagos").select("id, fecha, monto, medio, clientes(nombre)").eq("anulado", false).order("creado_en", { ascending: false }).limit(6),
-    supabase.from("remitos").select("total, unidad_negocio_id").eq("estado", "emitido").gte("fecha", primerDiaMes),
+    supabase.from("cuenta_corriente").select("debe, unidad_negocio_id, remito_id").eq("tipo", "remito").gte("fecha", primerDiaMes),
   ]);
+  const remitosMes = new Set((ventasMes.data ?? []).map((v) => v.remito_id));
 
   const resumen = unidades.map((u) => ({
     u,
-    ventas: (ventasMes.data ?? []).filter((r) => r.unidad_negocio_id === u.id).reduce((a, r) => a + Number(r.total), 0),
-    cantidad: (ventasMes.data ?? []).filter((r) => r.unidad_negocio_id === u.id).length,
+    ventas: (ventasMes.data ?? []).filter((r) => r.unidad_negocio_id === u.id).reduce((a, r) => a + Number(r.debe), 0),
+    cantidad: new Set((ventasMes.data ?? []).filter((r) => r.unidad_negocio_id === u.id).map((r) => r.remito_id)).size,
     deuda: (saldosUnidad.data ?? []).filter((s) => s.unidad_negocio_id === u.id).reduce((a, s) => a + Math.max(0, Number(s.saldo)), 0),
   }));
-  const totalMes = (ventasMes.data ?? []).reduce((a, r) => a + Number(r.total), 0);
+  const totalMes = (ventasMes.data ?? []).reduce((a, r) => a + Number(r.debe), 0);
   const totalDeuda = (saldosUnidad.data ?? []).reduce((a, s) => a + Math.max(0, Number(s.saldo)), 0);
 
   return (
@@ -52,7 +53,7 @@ export default async function InicioPage() {
           <div className="font-bold mb-2">Total</div>
           <div className="label" style={{ color: "#8a97b3" }}>Ventas del mes</div>
           <div className="text-xl font-bold">{formatoMoneda(totalMes)}</div>
-          <div className="text-xs mb-2" style={{ color: "#8a97b3" }}>{ventasMes.data?.length ?? 0} remitos</div>
+          <div className="text-xs mb-2" style={{ color: "#8a97b3" }}>{remitosMes.size} remitos</div>
           <div className="label" style={{ color: "#8a97b3" }}>A cobrar</div>
           <div className="text-xl font-bold">{formatoMoneda(totalDeuda)}</div>
         </div>
@@ -110,7 +111,7 @@ export default async function InicioPage() {
                 <tr key={r.id}>
                   <td><Link className="underline" href={`/remitos/${r.id}`}>{numeroRemito(r.numero)}</Link></td>
                   <td>{formatoFecha(r.fecha)}</td>
-                  <td>{r.clientes?.nombre} <UnidadBadge unidades={unidades} id={r.unidad_negocio_id} /></td>
+                  <td>{r.clientes?.nombre}</td>
                   <td className="num">{formatoMoneda(r.total)}</td>
                   <td><EstadoPagoBadge estado={r.estado_pago} /></td>
                 </tr>

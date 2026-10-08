@@ -19,13 +19,11 @@ export default function RemitoForm({
   productos,
   unidades,
   clienteInicial,
-  unidadInicial,
 }: {
   clientes: Cliente[];
   productos: Producto[];
   unidades: UnidadNegocio[];
   clienteInicial?: string;
-  unidadInicial?: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -33,7 +31,6 @@ export default function RemitoForm({
 
   const [clienteId, setClienteId] = useState(clienteInicial ?? "");
   const clienteSel = clientes.find((c) => c.id === clienteId);
-  const [unidadId, setUnidadId] = useState(unidadInicial ?? (unidades.length === 1 ? unidades[0].id : ""));
   const [tipoPrecio, setTipoPrecio] = useState<TipoPrecio>(clienteSel?.tipo_precio ?? "minorista");
   const [descuento, setDescuento] = useState(0);
   const [observaciones, setObservaciones] = useState("");
@@ -41,11 +38,7 @@ export default function RemitoForm({
 
   const precioDe = (p: Producto, tipo: TipoPrecio) => Number(tipo === "mayorista" ? p.precio_mayorista : p.precio_minorista);
 
-  // Productos de la unidad elegida (los que todavía no tienen unidad asignada también se muestran)
-  const productosUnidad = useMemo(
-    () => (unidadId ? productos.filter((p) => !p.unidad_negocio_id || p.unidad_negocio_id === unidadId) : productos),
-    [productos, unidadId]
-  );
+  const nombreUnidad = (id: string | null) => unidades.find((u) => u.id === id)?.nombre ?? "sin unidad";
 
   const opcionesClientes = useMemo(
     () => clientes.map((c) => ({ value: c.id, label: c.nombre, sub: c.localidad ?? undefined, keywords: [c.cuit, c.telefono].filter(Boolean).join(" ") })),
@@ -53,30 +46,19 @@ export default function RemitoForm({
   );
   const opcionesProductos = useMemo(
     () =>
-      productosUnidad.map((p) => ({
+      productos.map((p) => ({
         value: p.id,
         label: p.nombre,
-        sub: `${p.codigo ? p.codigo + " · " : ""}stock ${formatoNumero(p.stock)} · ${formatoMoneda(precioDe(p, tipoPrecio))}`,
-        keywords: [p.codigo, p.categoria].filter(Boolean).join(" "),
+        sub: `${p.codigo ? p.codigo + " · " : ""}${nombreUnidad(p.unidad_negocio_id)} · stock ${formatoNumero(p.stock)} · ${formatoMoneda(precioDe(p, tipoPrecio))}`,
+        keywords: [p.codigo, p.categoria, nombreUnidad(p.unidad_negocio_id)].filter(Boolean).join(" "),
       })),
-    [productosUnidad, tipoPrecio]
+    [productos, tipoPrecio, unidades]
   );
 
   function cambiarCliente(id: string) {
     setClienteId(id);
     const c = clientes.find((x) => x.id === id);
     if (c) cambiarTipoPrecio(c.tipo_precio);
-  }
-
-  function cambiarUnidad(id: string) {
-    setUnidadId(id);
-    // Sacar de las líneas los productos que no son de esta unidad
-    setLineas((ls) =>
-      ls.map((l) => {
-        const p = productos.find((x) => x.id === l.producto_id);
-        return p && p.unidad_negocio_id && p.unidad_negocio_id !== id ? { ...l, producto_id: "", precio_unitario: 0 } : l;
-      })
-    );
   }
 
   function cambiarTipoPrecio(tipo: TipoPrecio) {
@@ -114,14 +96,24 @@ export default function RemitoForm({
     return p && Number(p.stock) < l.cantidad;
   });
 
-  const puedeGuardar = !!clienteId && !!unidadId && lineas.some((l) => l.producto_id && l.cantidad > 0);
+  const puedeGuardar = !!clienteId && lineas.some((l) => l.producto_id && l.cantidad > 0);
+
+  // Resumen por unidad de negocio (lo que va a ir a cada cuenta)
+  const porUnidad = useMemo(() => {
+    const m = new Map<string | null, number>();
+    lineas.forEach((l) => {
+      const p = productos.find((x) => x.id === l.producto_id);
+      if (!p) return;
+      m.set(p.unidad_negocio_id, (m.get(p.unidad_negocio_id) ?? 0) + l.cantidad * l.precio_unitario);
+    });
+    return [...m.entries()];
+  }, [lineas, productos]);
 
   function guardar() {
     setError(null);
     startTransition(async () => {
       const res = await crearRemito({
         cliente_id: clienteId,
-        unidad_negocio_id: unidadId,
         tipo_precio: tipoPrecio,
         descuento: descuento || 0,
         observaciones,
@@ -137,27 +129,6 @@ export default function RemitoForm({
       {error && <div className="alert-error">{error}</div>}
 
       <div className="card space-y-4">
-        <div>
-          <label className="label">Unidad de negocio *</label>
-          <div className="flex flex-wrap gap-2">
-            {unidades.map((u) => (
-              <button
-                key={u.id}
-                type="button"
-                className="btn"
-                style={
-                  unidadId === u.id
-                    ? { background: u.color, color: "#fff", borderColor: u.color }
-                    : { background: "#fff", color: u.color, borderColor: u.color }
-                }
-                onClick={() => cambiarUnidad(u.id)}
-              >
-                {u.nombre}
-              </button>
-            ))}
-            {unidades.length === 0 && <span className="text-sm" style={{ color: "var(--danger)" }}>No hay unidades de negocio cargadas. Agregalas en Configuración.</span>}
-          </div>
-        </div>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="md:col-span-2">
             <label className="label">Cliente *</label>
@@ -179,7 +150,6 @@ export default function RemitoForm({
 
       <div className="card">
         <h2 className="font-semibold mb-3">Productos</h2>
-        {!unidadId && <p className="text-sm mb-2" style={{ color: "var(--muted)" }}>Elegí primero la unidad de negocio para ver sus productos.</p>}
         <div>
           <table className="table">
             <thead>
@@ -192,7 +162,7 @@ export default function RemitoForm({
                 return (
                   <tr key={l.key}>
                     <td style={{ overflow: "visible" }}>
-                      <Combobox opciones={opcionesProductos} value={l.producto_id} onChange={(v) => elegirProducto(l.key, v)} placeholder="Nombre o código…" disabled={!unidadId} />
+                      <Combobox opciones={opcionesProductos} value={l.producto_id} onChange={(v) => elegirProducto(l.key, v)} placeholder="Nombre o código…" />
                     </td>
                     <td className="num text-sm" style={{ color: falta ? "var(--danger)" : "var(--muted)" }}>{p ? `${formatoNumero(p.stock)} ${p.unidad}` : ""}</td>
                     <td>
@@ -216,6 +186,19 @@ export default function RemitoForm({
           </table>
         </div>
         <button type="button" className="btn btn-secondary mt-3" onClick={agregarLinea}>+ Agregar línea</button>
+        {porUnidad.length > 0 && (
+          <div className="flex flex-wrap gap-3 mt-3 text-sm">
+            {porUnidad.map(([uid, imp]) => {
+              const u = unidades.find((x) => x.id === uid);
+              return (
+                <span key={uid ?? "null"} className="badge" style={{ background: (u?.color ?? "#6b7280") + "22", color: u?.color ?? "#6b7280", fontSize: "0.8rem", textTransform: "none" }}>
+                  {u?.nombre ?? "Sin unidad"}: {formatoMoneda(imp)}
+                </span>
+              );
+            })}
+            {porUnidad.length > 1 && <span style={{ color: "var(--muted)" }}>Este remito va a las dos cuentas: cada unidad recibe su parte (y el descuento se reparte proporcional).</span>}
+          </div>
+        )}
         {sinStock && <div className="alert-error mt-3">Ojo: alguna línea supera el stock disponible. Se puede guardar igual y el stock quedará en negativo.</div>}
       </div>
 
