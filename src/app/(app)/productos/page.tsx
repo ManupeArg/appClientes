@@ -2,11 +2,9 @@ import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import Mensaje from "@/components/Mensaje";
 import FiltroUnidad from "@/components/FiltroUnidad";
-import UnidadBadge from "@/components/UnidadBadge";
 import SeleccionMasiva from "@/components/SeleccionMasiva";
 import { createClient } from "@/lib/supabase/server";
 import { getUnidades } from "@/lib/unidades";
-import { formatoMoneda, formatoNumero } from "@/lib/utils";
 import type { Producto } from "@/lib/types";
 
 export default async function ProductosPage({ searchParams }: { searchParams: Promise<{ q?: string; ok?: string; error?: string; todos?: string; bajo?: string; unidad?: string; sinunidad?: string }> }) {
@@ -50,42 +48,7 @@ export default async function ProductosPage({ searchParams }: { searchParams: Pr
         </form>
       </div>
 
-      <SeleccionMasiva productos={productos} unidades={unidades} volver={volver}>
-        {(sel, toggle) => (
-          <div className="card p-0 overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr><th></th><th>Código</th><th>Producto</th><th>Unidad</th><th>Categoría</th><th className="num">Minorista</th><th className="num">Mayorista</th><th className="num">Stock</th><th className="num">Mínimo</th></tr>
-              </thead>
-              <tbody>
-                {productos.map((p) => {
-                  const bajo = p.alerta_stock && Number(p.stock) <= Number(p.stock_minimo);
-                  return (
-                    <tr key={p.id}>
-                      <td><input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} /></td>
-                      <td className="text-xs" style={{ color: "var(--muted)" }}>{p.codigo}</td>
-                      <td className="font-medium">
-                        <Link className="underline" href={`/productos/${p.id}`}>{p.nombre}</Link>
-                        {!p.activo && <span className="badge badge-muted ml-2">inactivo</span>}
-                      </td>
-                      <td><UnidadBadge unidades={unidades} id={p.unidad_negocio_id} /></td>
-                      <td>{p.categoria}</td>
-                      <td className="num">{formatoMoneda(p.precio_minorista)}</td>
-                      <td className="num">{formatoMoneda(p.precio_mayorista)}</td>
-                      <td className="num font-semibold" style={{ color: bajo ? "var(--danger)" : undefined }}>
-                        {formatoNumero(p.stock)} {p.unidad}
-                        {bajo && <span className="badge badge-danger ml-2">bajo</span>}
-                      </td>
-                      <td className="num">{p.alerta_stock ? formatoNumero(p.stock_minimo) : <span style={{ color: "var(--muted)" }}>sin alerta</span>}</td>
-                    </tr>
-                  );
-                })}
-                {!productos.length && <tr><td colSpan={9} style={{ color: "var(--muted)" }}>No hay productos.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </SeleccionMasiva>
+      <SeleccionMasiva productos={productos} unidades={unidades} volver={volver} />
     </>
   );
 }
