@@ -1,6 +1,7 @@
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import Mensaje from "@/components/Mensaje";
+import BusquedaViva from "@/components/BusquedaViva";
 import { createClient } from "@/lib/supabase/server";
 import { getUnidades } from "@/lib/unidades";
 import { formatoMoneda } from "@/lib/utils";
@@ -26,12 +27,15 @@ export default async function ClientesPage({ searchParams }: { searchParams: Pro
         <Link href="/clientes/nuevo" className="btn btn-primary">+ Nuevo cliente</Link>
       </PageHeader>
       <Mensaje ok={sp.ok} />
-      <form className="flex flex-wrap items-center gap-3 mb-4 no-print">
-        <input className="input max-w-sm" name="q" placeholder="Buscar por nombre…" defaultValue={sp.q ?? ""} />
+      <div className="flex flex-wrap items-center gap-3 mb-4 no-print">
+      <BusquedaViva placeholder="Buscar cliente…" />
+      <form className="flex flex-wrap items-center gap-3">
+        {sp.q && <input type="hidden" name="q" value={sp.q} />}
         <label className="flex items-center gap-1 text-sm"><input type="checkbox" name="deuda" value="1" defaultChecked={!!sp.deuda} /> solo con deuda</label>
         <label className="flex items-center gap-1 text-sm"><input type="checkbox" name="todos" value="1" defaultChecked={!!sp.todos} /> incluir inactivos</label>
-        <button className="btn btn-secondary">Buscar</button>
+        <button className="btn btn-secondary btn-sm">Aplicar</button>
       </form>
+      </div>
       <div className="card p-0 overflow-x-auto">
         <table className="table">
           <thead>

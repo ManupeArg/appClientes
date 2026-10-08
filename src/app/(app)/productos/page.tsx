@@ -3,6 +3,7 @@ import PageHeader from "@/components/PageHeader";
 import Mensaje from "@/components/Mensaje";
 import FiltroUnidad from "@/components/FiltroUnidad";
 import SeleccionMasiva from "@/components/SeleccionMasiva";
+import BusquedaViva from "@/components/BusquedaViva";
 import { createClient } from "@/lib/supabase/server";
 import { getUnidades } from "@/lib/unidades";
 import type { Producto } from "@/lib/types";
@@ -38,13 +39,14 @@ export default async function ProductosPage({ searchParams }: { searchParams: Pr
       )}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <FiltroUnidad unidades={unidades} actual={sp.unidad} base="/productos" extra={{ q: sp.q, todos: sp.todos, bajo: sp.bajo }} />
+        <BusquedaViva placeholder="Nombre, código o categoría…" />
         <form className="flex flex-wrap gap-3 items-center no-print">
           {sp.unidad && <input type="hidden" name="unidad" value={sp.unidad} />}
-          <input className="input max-w-sm" name="q" placeholder="Nombre, código o categoría…" defaultValue={sp.q ?? ""} />
+          {sp.q && <input type="hidden" name="q" value={sp.q} />}
           <label className="flex items-center gap-1 text-sm"><input type="checkbox" name="sinunidad" value="1" defaultChecked={!!sp.sinunidad} /> sin unidad</label>
           <label className="flex items-center gap-1 text-sm"><input type="checkbox" name="bajo" value="1" defaultChecked={!!sp.bajo} /> stock bajo</label>
           <label className="flex items-center gap-1 text-sm"><input type="checkbox" name="todos" value="1" defaultChecked={!!sp.todos} /> inactivos</label>
-          <button className="btn btn-secondary">Filtrar</button>
+          <button className="btn btn-secondary btn-sm">Aplicar</button>
         </form>
       </div>
 

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import FiltroUnidad from "@/components/FiltroUnidad";
+import BusquedaViva from "@/components/BusquedaViva";
 import UnidadesChips from "@/components/UnidadesChips";
 import EstadoPagoBadge from "@/components/EstadoPagoBadge";
 import { createClient } from "@/lib/supabase/server";
@@ -35,14 +36,15 @@ export default async function RemitosPage({ searchParams }: { searchParams: Prom
       </PageHeader>
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <FiltroUnidad unidades={unidades} actual={sp.unidad} base="/remitos" extra={{ q: sp.q, desde: sp.desde, hasta: sp.hasta, pendientes: sp.pendientes, vencidos: sp.vencidos }} />
+        <BusquedaViva placeholder="Cliente…" />
         <form className="flex flex-wrap gap-2 no-print">
           {sp.unidad && <input type="hidden" name="unidad" value={sp.unidad} />}
-          <input className="input max-w-xs" name="q" placeholder="Cliente…" defaultValue={sp.q ?? ""} />
+          {sp.q && <input type="hidden" name="q" value={sp.q} />}
           <input className="input" style={{ width: 160 }} type="date" name="desde" defaultValue={sp.desde ?? ""} />
           <input className="input" style={{ width: 160 }} type="date" name="hasta" defaultValue={sp.hasta ?? ""} />
           <label className="flex items-center gap-1 text-sm"><input type="checkbox" name="pendientes" value="1" defaultChecked={!!sp.pendientes} /> solo con saldo</label>
           <label className="flex items-center gap-1 text-sm"><input type="checkbox" name="vencidos" value="1" defaultChecked={!!sp.vencidos} /> solo vencidos</label>
-          <button className="btn btn-secondary">Filtrar</button>
+          <button className="btn btn-secondary btn-sm">Aplicar</button>
         </form>
       </div>
       <div className="card p-0 overflow-x-auto">
