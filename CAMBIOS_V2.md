@@ -3,7 +3,8 @@
 ## Cómo aplicar la actualización
 
 1. **Base de datos**: Supabase → SQL Editor → New query → pegar TODO `supabase/migration_002.sql` → Run.
-   Se corre una sola vez. Además de los cambios, reactiva los productos y clientes que habían quedado ocultos por el bug de "Guardar cambios".
+   Después, otra query nueva con TODO `supabase/migration_003.sql` → Run. (Las dos se pueden volver a correr sin problema.)
+   La 002 además reactiva los productos y clientes que habían quedado ocultos por el bug de "Guardar cambios".
 2. **Código**: reemplazar la carpeta del proyecto por esta versión (o copiar `src/`, `supabase/`, `README.md` y este archivo encima) y subir a GitHub:
    ```bash
    git add .
@@ -21,7 +22,8 @@
 - **Bug corregido**: al guardar un producto o cliente se marcaba como inactivo y desaparecía del listado. Ya no pasa, y la migración reactiva todo.
 - **Buscador por texto** para clientes y productos en remitos y pagos: escribís parte del nombre, código, CUIT o teléfono y filtra. Flechas + Enter para elegir.
 - **Unidades de negocio** ("dos empresas en una"): cada **producto** pertenece a una unidad. Un remito puede mezclar productos de las dos; la cuenta corriente se parte sola: el importe de cada unidad va a su propia cuenta (si hay descuento, se reparte proporcional). Inicio, clientes, remitos, pagos y cuenta corriente muestran los números separados por unidad y con filtro.
-- **Pagos a un remito**: el pago se aplica a un remito puntual, no al cliente en general. No se puede pagar más de lo pendiente de ese remito. Si el remito tiene productos de las dos unidades, el pago se reparte entre las dos en la misma proporción que la venta. Cada remito muestra pagado / pendiente y su estado. Para anular un remito con pagos, primero se anulan los pagos.
+- **Pagos imputados a remitos**: el pago se registra al cliente y se imputa a uno o varios remitos (tildás cuáles paga, o "Repartir automático": los más viejos primero). Lo que no se asigna queda **a cuenta** y aparece en la ficha del cliente con un botón "Imputar a remitos" para asignarlo cuando se sepa. Cada remito muestra pagado / pendiente y su estado (pendiente, pago parcial, pagado), así ves que debe $600.000 "de estos 6 remitos". Si el remito tiene productos de las dos unidades, la imputación se reparte entre las dos en la misma proporción que la venta. Para anular un remito con imputaciones, primero se quitan (vuelven a cuenta).
+- **Plazos y vencimientos**: cada cliente tiene un plazo en días (0 = sin plazo). El remito vence a fecha + plazo y se marca **vencido** si todavía tiene saldo. Clientes, inicio y remitos muestran cuánto está vencido; en Remitos hay filtro "solo vencidos".
 - **Cantidades enteras**: cantidades de remito, stock, stock mínimo y ajustes son números enteros.
 - **Fechas automáticas**: remitos y pagos toman la fecha de hoy (hora Argentina) y no se pueden editar.
-- Los pagos viejos que se habían cargado "al cliente" (sin remito) quedan en la cuenta corriente como "pago a cuenta" y en el saldo "Sin unidad".
+- Los pagos viejos que se habían cargado "al cliente" (sin remito) quedan como pagos a cuenta: desde la ficha del cliente los imputás a los remitos que correspondan.

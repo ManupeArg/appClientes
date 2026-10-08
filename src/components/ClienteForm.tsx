@@ -21,6 +21,11 @@ export default function ClienteForm({ action, cliente }: { action: (fd: FormData
           </select>
         </div>
         <div>
+          <label className="label">Plazo de pago (días)</label>
+          <input className="input" name="plazo_dias" type="number" min="0" step="1" defaultValue={cliente?.plazo_dias ?? 0} />
+          <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>0 = sin plazo. Con 30, un remito vence a los 30 días y se marca vencido.</p>
+        </div>
+        <div>
           <label className="label">Teléfono</label>
           <input className="input" name="telefono" defaultValue={cliente?.telefono ?? ""} />
         </div>

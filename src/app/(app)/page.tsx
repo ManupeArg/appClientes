@@ -13,7 +13,7 @@ export default async function InicioPage() {
   const [unidades, saldosUnidad, saldos, stockBajo, ultimosRemitos, ultimosPagos, ventasMes] = await Promise.all([
     getUnidades(supabase),
     supabase.from("saldos_clientes_unidad").select("unidad_negocio_id, saldo"),
-    supabase.from("saldos_clientes").select("*").gt("saldo", 0).order("saldo", { ascending: false }).limit(8),
+    supabase.from("saldos_clientes").select("*").gt("saldo", 0).order("saldo_vencido", { ascending: false }).order("saldo", { ascending: false }).limit(8),
     supabase.from("productos_stock_bajo").select("*").limit(10),
     supabase.from("remitos_saldo").select("id, numero, fecha, total, saldo, estado_pago, clientes(nombre)").order("creado_en", { ascending: false }).limit(6),
     supabase.from("pagos").select("id, fecha, monto, medio, clientes(nombre)").eq("anulado", false).order("creado_en", { ascending: false }).limit(6),
@@ -56,6 +56,7 @@ export default async function InicioPage() {
           <div className="text-xs mb-2" style={{ color: "#8a97b3" }}>{remitosMes.size} remitos</div>
           <div className="label" style={{ color: "#8a97b3" }}>A cobrar</div>
           <div className="text-xl font-bold">{formatoMoneda(totalDeuda)}</div>
+          <Link href="/remitos?vencidos=1" className="text-xs underline" style={{ color: "#ff8a9a" }}>vencido: {formatoMoneda((saldos.data ?? []).reduce((a, s) => a + Number(s.saldo_vencido), 0))}</Link>
         </div>
         <div className="card">
           <div className="label">Productos con stock bajo</div>
@@ -70,11 +71,12 @@ export default async function InicioPage() {
           <h2 className="font-semibold mb-3">Clientes con deuda</h2>
           {saldos.data?.length ? (
             <table className="table">
-              <thead><tr><th>Cliente</th><th className="num">Saldo</th></tr></thead>
+              <thead><tr><th>Cliente</th><th className="num">Vencido</th><th className="num">Saldo</th></tr></thead>
               <tbody>
                 {saldos.data.map((s) => (
                   <tr key={s.cliente_id}>
                     <td><Link className="underline" href={`/clientes/${s.cliente_id}`}>{s.nombre}</Link></td>
+                    <td className="num" style={{ color: "var(--danger)" }}>{Number(s.saldo_vencido) > 0 ? formatoMoneda(s.saldo_vencido) : ""}</td>
                     <td className="num font-semibold">{formatoMoneda(s.saldo)}</td>
                   </tr>
                 ))}

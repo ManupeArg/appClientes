@@ -9,21 +9,25 @@ import { createClient } from "@/lib/supabase/server";
 import { anularPago } from "@/lib/actions/pagos";
 import { getUnidades } from "@/lib/unidades";
 import { formatoMoneda, formatoFecha, numeroRemito } from "@/lib/utils";
-import type { MovimientoCC, RemitoSaldo, RemitoUnidad } from "@/lib/types";
+import type { MovimientoCC, RemitoSaldo, RemitoUnidad, PagoSaldo, SaldoCliente } from "@/lib/types";
 import UnidadesChips from "@/components/UnidadesChips";
 
 export default async function ClienteDetallePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; ok?: string; unidad?: string }> }) {
   const { id } = await params;
   const sp = await searchParams;
   const supabase = await createClient();
-  const [{ data: cliente }, { data: movimientos }, { data: remitosData }, { data: saldosUnidad }, unidades] = await Promise.all([
+  const [{ data: cliente }, { data: movimientos }, { data: remitosData }, { data: saldosUnidad }, unidades, { data: resumenData }, { data: aCuentaData }] = await Promise.all([
     supabase.from("clientes").select("*").eq("id", id).single(),
     supabase.from("cuenta_corriente").select("*").eq("cliente_id", id).order("fecha").order("creado_en"),
     supabase.from("remitos_saldo").select("*").eq("cliente_id", id).order("numero", { ascending: false }),
     supabase.from("saldos_clientes_unidad").select("*").eq("cliente_id", id),
     getUnidades(supabase, false),
+    supabase.from("saldos_clientes").select("*").eq("cliente_id", id).single(),
+    supabase.from("pagos_saldo").select("*").eq("cliente_id", id).eq("anulado", false).gt("a_cuenta", 0).order("fecha"),
   ]);
   if (!cliente) notFound();
+  const resumen = resumenData as SaldoCliente | null;
+  const pagosACuenta = (aCuentaData ?? []) as PagoSaldo[];
   const { data: partesData } = await supabase.from("remito_unidades").select("*").in("remito_id", (remitosData ?? []).map((r) => r.id));
   const partes = (partesData ?? []) as RemitoUnidad[];
 
@@ -70,9 +74,36 @@ export default async function ClienteDetallePage({ params, searchParams }: { par
         <div className="card" style={{ background: "#141c2e", color: "#fff", borderColor: "#141c2e" }}>
           <div className="label" style={{ color: "#8a97b3" }}>Saldo total</div>
           <div className="text-xl font-bold">{formatoMoneda(saldoTotal)}</div>
-          <div className="text-xs" style={{ color: "#8a97b3" }}>lista {cliente.tipo_precio}</div>
+          <div className="text-xs" style={{ color: "#8a97b3" }}>
+            {Number(resumen?.saldo_vencido ?? 0) > 0 ? <span style={{ color: "#ff8a9a" }}>vencido {formatoMoneda(resumen?.saldo_vencido)}</span> : "nada vencido"}
+            {" · "}plazo {cliente.plazo_dias ? `${cliente.plazo_dias} días` : "sin plazo"}
+          </div>
         </div>
       </div>
+
+      {pagosACuenta.length > 0 && (
+        <div className="card mb-4" style={{ borderLeft: "4px solid var(--warn)" }}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="font-semibold">Pagos a cuenta sin imputar: {formatoMoneda(resumen?.a_cuenta)}</div>
+              <div className="text-sm" style={{ color: "var(--muted)" }}>Plata que el cliente ya pagó pero todavía no se asignó a ningún remito.</div>
+            </div>
+          </div>
+          <table className="table mt-2">
+            <tbody>
+              {pagosACuenta.map((p) => (
+                <tr key={p.id}>
+                  <td>{formatoFecha(p.fecha)}</td>
+                  <td className="capitalize">{p.medio}{p.referencia ? ` · ${p.referencia}` : ""}</td>
+                  <td className="text-sm" style={{ color: "var(--muted)" }}>pago de {formatoMoneda(p.monto)}</td>
+                  <td className="num font-semibold">{formatoMoneda(p.a_cuenta)} a cuenta</td>
+                  <td className="text-right no-print"><Link className="btn btn-primary btn-sm" href={`/pagos/${p.id}/imputar`}>Imputar a remitos</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {cliente.notas && <div className="card mb-4 text-sm whitespace-pre-wrap">{cliente.notas}</div>}
 
@@ -81,12 +112,13 @@ export default async function ClienteDetallePage({ params, searchParams }: { par
       <h2 className="font-semibold mb-2">Remitos</h2>
       <div className="card p-0 overflow-x-auto mb-6">
         <table className="table">
-          <thead><tr><th>N°</th><th>Fecha</th><th>Unidades</th><th className="num">Total</th><th className="num">Pagado</th><th className="num">Pendiente</th><th>Estado</th><th></th></tr></thead>
+          <thead><tr><th>N°</th><th>Fecha</th><th>Vence</th><th>Unidades</th><th className="num">Total</th><th className="num">Pagado</th><th className="num">Pendiente</th><th>Estado</th><th></th></tr></thead>
           <tbody>
             {remitos.map((r) => (
               <tr key={r.id}>
                 <td><Link className="underline font-medium" href={`/remitos/${r.id}`}>{numeroRemito(r.numero)}</Link></td>
                 <td>{formatoFecha(r.fecha)}</td>
+                <td>{r.vencimiento ? formatoFecha(r.vencimiento) : "—"}{r.vencido && <span className="badge badge-danger ml-1">vencido</span>}</td>
                 <td><UnidadesChips unidades={unidades} partes={partes.filter((p) => p.remito_id === r.id)} /></td>
                 <td className="num">{formatoMoneda(r.total)}</td>
                 <td className="num" style={{ color: "var(--ok)" }}>{Number(r.pagado) ? formatoMoneda(r.pagado) : ""}</td>
@@ -97,7 +129,7 @@ export default async function ClienteDetallePage({ params, searchParams }: { par
                 </td>
               </tr>
             ))}
-            {!remitos.length && <tr><td colSpan={8} style={{ color: "var(--muted)" }}>Sin remitos.</td></tr>}
+            {!remitos.length && <tr><td colSpan={9} style={{ color: "var(--muted)" }}>Sin remitos.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -123,9 +155,9 @@ export default async function ClienteDetallePage({ params, searchParams }: { par
                 <td className="num" style={{ color: "var(--ok)" }}>{Number(m.haber) ? formatoMoneda(m.haber) : ""}</td>
                 <td className="num font-semibold">{formatoMoneda(m.saldo)}</td>
                 <td className="text-right no-print">
-                  {m.tipo === "pago" && m.pago_id && (
+                  {m.tipo === "pago" && m.pago_id && !m.remito_id && (
                     <form action={anularPago.bind(null, m.pago_id, `/clientes/${id}`)}>
-                      <button className="btn btn-danger btn-sm" type="submit">Anular</button>
+                      <button className="btn btn-danger btn-sm" type="submit" title="Anula el pago completo">Anular pago</button>
                     </form>
                   )}
                 </td>

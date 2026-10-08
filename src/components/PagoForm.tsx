@@ -1,100 +1,80 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Combobox from "@/components/Combobox";
-import SubmitButton from "@/components/SubmitButton";
+import ImputacionTabla, { type Asignacion } from "@/components/ImputacionTabla";
 import { crearPago } from "@/lib/actions/pagos";
-import { formatoMoneda, formatoFecha, numeroRemito, hoyISO } from "@/lib/utils";
-import type { Cliente, RemitoSaldo, UnidadNegocio } from "@/lib/types";
+import { formatoMoneda, formatoFecha, hoyISO } from "@/lib/utils";
+import type { Cliente, RemitoSaldo } from "@/lib/types";
 
 export default function PagoForm({
   clientes,
   remitos,
-  unidades,
   clienteInicial,
   remitoInicial,
 }: {
   clientes: Cliente[];
-  remitos: RemitoSaldo[]; // remitos con saldo pendiente
-  unidades: UnidadNegocio[];
+  remitos: RemitoSaldo[]; // remitos con saldo pendiente (de todos los clientes)
   clienteInicial?: string;
   remitoInicial?: string;
 }) {
-  const [clienteId, setClienteId] = useState(clienteInicial ?? remitos.find((r) => r.id === remitoInicial)?.cliente_id ?? "");
-  const [remitoId, setRemitoId] = useState(remitoInicial ?? "");
-  const remitoSel = remitos.find((r) => r.id === remitoId);
-  const [monto, setMonto] = useState<string>(remitoSel ? String(remitoSel.saldo) : "");
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const remitoIni = remitos.find((r) => r.id === remitoInicial);
+
+  const [clienteId, setClienteId] = useState(clienteInicial ?? remitoIni?.cliente_id ?? "");
+  const [monto, setMonto] = useState<string>(remitoIni ? String(remitoIni.saldo) : "");
+  const [medio, setMedio] = useState("efectivo");
+  const [referencia, setReferencia] = useState("");
+  const [observaciones, setObservaciones] = useState("");
+  const [asignaciones, setAsignaciones] = useState<Asignacion[]>(remitoIni ? [{ remito_id: remitoIni.id, monto: Number(remitoIni.saldo) }] : []);
 
   const opcionesClientes = useMemo(
     () => clientes.map((c) => ({ value: c.id, label: c.nombre, sub: c.localidad ?? undefined, keywords: [c.cuit, c.telefono].filter(Boolean).join(" ") })),
     [clientes]
   );
-
-  const remitosCliente = useMemo(() => remitos.filter((r) => r.cliente_id === clienteId), [remitos, clienteId]);
-  const opcionesRemitos = useMemo(
-    () =>
-      remitosCliente.map((r) => ({
-        value: r.id,
-        label: `${numeroRemito(r.numero)} · ${formatoFecha(r.fecha)}`,
-        sub: `debe ${formatoMoneda(r.saldo)} de ${formatoMoneda(r.total)}`,
-        keywords: String(r.numero),
-      })),
-    [remitosCliente]
-  );
-
-  function elegirRemito(id: string) {
-    setRemitoId(id);
-    const r = remitos.find((x) => x.id === id);
-    setMonto(r ? String(r.saldo) : "");
-  }
+  const remitosCliente = useMemo(() => remitos.filter((r) => r.cliente_id === clienteId).sort((a, b) => a.numero - b.numero), [remitos, clienteId]);
+  const montoNum = parseFloat(monto.replace(",", ".")) || 0;
+  const asignado = asignaciones.reduce((a, x) => a + x.monto, 0);
+  const deMas = asignado > montoNum + 0.009;
 
   function elegirCliente(id: string) {
     setClienteId(id);
-    setRemitoId("");
-    setMonto("");
+    setAsignaciones([]);
   }
 
-  const montoNum = parseFloat(monto.replace(",", ".")) || 0;
-  const excede = remitoSel ? montoNum > Number(remitoSel.saldo) + 0.009 : false;
+  function guardar() {
+    setError(null);
+    startTransition(async () => {
+      const res = await crearPago({ cliente_id: clienteId, monto: montoNum, medio, referencia, observaciones, imputaciones: asignaciones });
+      if (res.ok) {
+        const aCuenta = montoNum - asignado;
+        router.push(`/clientes/${clienteId}?ok=` + encodeURIComponent(aCuenta > 0.009 ? `Pago registrado. ${formatoMoneda(aCuenta)} quedaron a cuenta para imputar después.` : "Pago registrado e imputado."));
+      } else setError(res.error);
+    });
+  }
 
   return (
-    <form action={crearPago} className="card max-w-xl space-y-4">
-      <input type="hidden" name="volver_error" value="/pagos/nuevo" />
-      <input type="hidden" name="cliente_id" value={clienteId} />
-      <input type="hidden" name="remito_id" value={remitoId} />
-
-      <div>
-        <label className="label">Cliente *</label>
-        <Combobox opciones={opcionesClientes} value={clienteId} onChange={elegirCliente} placeholder="Nombre, CUIT o teléfono…" autoFocus={!clienteInicial && !remitoInicial} />
-      </div>
-
-      <div>
-        <label className="label">Remito que se paga *</label>
-        {clienteId && remitosCliente.length === 0 ? (
-          <div className="alert-ok">Este cliente no tiene remitos pendientes de pago.</div>
-        ) : (
-          <Combobox opciones={opcionesRemitos} value={remitoId} onChange={elegirRemito} placeholder={clienteId ? "Elegí el remito…" : "Primero elegí el cliente"} disabled={!clienteId} />
-        )}
-        {remitoSel && (
-          <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>
-            Total {formatoMoneda(remitoSel.total)} · ya pagado {formatoMoneda(remitoSel.pagado)} · <strong>pendiente {formatoMoneda(remitoSel.saldo)}</strong>
-          </p>
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
+    <div className="space-y-4 max-w-4xl">
+      {error && <div className="alert-error">{error}</div>}
+      <div className="card grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="md:col-span-2">
+          <label className="label">Cliente *</label>
+          <Combobox opciones={opcionesClientes} value={clienteId} onChange={elegirCliente} placeholder="Nombre, CUIT o teléfono…" autoFocus={!clienteId} />
+        </div>
         <div>
           <label className="label">Fecha</label>
           <div className="input" style={{ background: "#f3f4f6" }}>{formatoFecha(hoyISO())}</div>
         </div>
         <div>
-          <label className="label">Monto *</label>
-          <input className="input" type="number" step="0.01" min="0.01" name="monto" required value={monto} onChange={(e) => setMonto(e.target.value)} />
-          {excede && <p className="text-xs mt-1" style={{ color: "var(--danger)" }}>Supera lo pendiente del remito.</p>}
+          <label className="label">Monto del pago *</label>
+          <input className="input num" type="number" step="0.01" min="0.01" value={monto} onChange={(e) => setMonto(e.target.value)} />
         </div>
         <div>
           <label className="label">Medio de pago</label>
-          <select className="select" name="medio" defaultValue="efectivo">
+          <select className="select" value={medio} onChange={(e) => setMedio(e.target.value)}>
             <option value="efectivo">Efectivo</option>
             <option value="transferencia">Transferencia</option>
             <option value="tarjeta">Tarjeta</option>
@@ -104,15 +84,32 @@ export default function PagoForm({
         </div>
         <div>
           <label className="label">Referencia</label>
-          <input className="input" name="referencia" placeholder="N° operación, cheque…" />
+          <input className="input" value={referencia} onChange={(e) => setReferencia(e.target.value)} placeholder="N° operación, cheque…" />
+        </div>
+        <div className="md:col-span-2">
+          <label className="label">Observaciones</label>
+          <input className="input" value={observaciones} onChange={(e) => setObservaciones(e.target.value)} />
         </div>
       </div>
-      <div>
-        <label className="label">Observaciones</label>
-        <textarea className="textarea" name="observaciones" rows={2} />
+
+      <div className="card">
+        <h2 className="font-semibold mb-1">¿A qué remitos corresponde?</h2>
+        <p className="text-sm mb-3" style={{ color: "var(--muted)" }}>
+          Tildá los remitos que paga (o escribí cuánto va a cada uno). Lo que no asignes queda a cuenta del cliente y lo podés imputar más adelante.
+        </p>
+        {clienteId ? (
+          <ImputacionTabla remitos={remitosCliente} asignaciones={asignaciones} onChange={setAsignaciones} disponible={montoNum} />
+        ) : (
+          <p className="text-sm" style={{ color: "var(--muted)" }}>Elegí primero el cliente.</p>
+        )}
       </div>
-      <SubmitButton>Registrar pago</SubmitButton>
-      {(!remitoId || excede) && <p className="text-xs" style={{ color: "var(--muted)" }}>Elegí un remito y un monto que no supere lo pendiente.</p>}
-    </form>
+
+      <div className="flex items-center gap-3">
+        <button type="button" className="btn btn-primary" disabled={pending || !clienteId || montoNum <= 0 || deMas} onClick={guardar}>
+          {pending ? "Guardando…" : "Registrar pago"}
+        </button>
+        {deMas && <span className="text-sm" style={{ color: "var(--danger)" }}>Lo asignado supera el monto del pago.</span>}
+      </div>
+    </div>
   );
 }

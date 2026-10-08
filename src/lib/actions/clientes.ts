@@ -18,6 +18,7 @@ function datosCliente(formData: FormData) {
     direccion: vacioANull(formData.get("direccion")),
     localidad: vacioANull(formData.get("localidad")),
     tipo_precio: String(formData.get("tipo_precio") ?? "minorista"),
+    plazo_dias: Math.max(0, parseInt(String(formData.get("plazo_dias") ?? "0"), 10) || 0),
     notas: vacioANull(formData.get("notas")),
     activo: formData.has("activo") ? formData.getAll("activo").includes("on") : true,
   };

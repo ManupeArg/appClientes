@@ -38,7 +38,7 @@ export default async function ClientesPage({ searchParams }: { searchParams: Pro
             <tr>
               <th>Nombre</th><th>Lista</th>
               {unidades.map((u) => <th key={u.id} className="num" style={{ color: u.color }}>Saldo {u.nombre}</th>)}
-              <th className="num">Saldo total</th><th></th>
+              <th className="num">Vencido</th><th className="num">A cuenta</th><th className="num">Saldo total</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -53,17 +53,21 @@ export default async function ClientesPage({ searchParams }: { searchParams: Pro
                   const s = mapa.get(`${c.cliente_id}|${u.id}`) ?? 0;
                   return <td key={u.id} className="num" style={{ color: s > 0 ? "var(--warn)" : s < 0 ? "var(--ok)" : "var(--muted)" }}>{s ? formatoMoneda(s) : "—"}</td>;
                 })}
+                <td className="num" style={{ color: "var(--danger)" }}>{Number(c.saldo_vencido) > 0 ? formatoMoneda(c.saldo_vencido) : ""}</td>
+                <td className="num" style={{ color: "var(--ok)" }}>{Number(c.a_cuenta) > 0 ? formatoMoneda(c.a_cuenta) : ""}</td>
                 <td className="num font-semibold" style={{ color: Number(c.saldo) > 0 ? "var(--warn)" : Number(c.saldo) < 0 ? "var(--ok)" : undefined }}>{formatoMoneda(c.saldo)}</td>
                 <td className="text-right"><Link className="btn btn-secondary btn-sm" href={`/remitos/nuevo?cliente=${c.cliente_id}`}>Remito</Link></td>
               </tr>
             ))}
-            {!clientes?.length && <tr><td colSpan={4 + unidades.length} style={{ color: "var(--muted)" }}>No hay clientes cargados.</td></tr>}
+            {!clientes?.length && <tr><td colSpan={6 + unidades.length} style={{ color: "var(--muted)" }}>No hay clientes cargados.</td></tr>}
           </tbody>
           {(clientes?.length ?? 0) > 0 && (
             <tfoot>
               <tr>
                 <td colSpan={2} className="font-semibold">Total a cobrar</td>
                 {totalesUnidad.map(({ u, total }) => <td key={u.id} className="num font-semibold">{formatoMoneda(total)}</td>)}
+                <td className="num font-semibold" style={{ color: "var(--danger)" }}>{formatoMoneda((clientes ?? []).reduce((a, c) => a + Number(c.saldo_vencido), 0))}</td>
+                <td className="num font-semibold">{formatoMoneda((clientes ?? []).reduce((a, c) => a + Number(c.a_cuenta), 0))}</td>
                 <td className="num font-bold">{formatoMoneda((clientes ?? []).reduce((a, c) => a + Number(c.saldo), 0))}</td>
                 <td></td>
               </tr>

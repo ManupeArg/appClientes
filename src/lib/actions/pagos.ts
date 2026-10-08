@@ -4,31 +4,55 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
-export async function crearPago(formData: FormData) {
+export interface ImputacionNueva {
+  remito_id: string;
+  monto: number;
+}
+
+export async function crearPago(datos: {
+  cliente_id: string;
+  monto: number;
+  medio: string;
+  referencia: string;
+  observaciones: string;
+  imputaciones: ImputacionNueva[];
+}): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const supabase = await createClient();
-  const cliente_id = String(formData.get("cliente_id") ?? "");
-  const remito_id = String(formData.get("remito_id") ?? "");
-  const monto = parseFloat(String(formData.get("monto") ?? "").replace(",", "."));
-  const errorA = String(formData.get("volver_error") ?? "") || "/pagos/nuevo";
+  if (!datos.cliente_id) return { ok: false, error: "Elegí un cliente" };
+  if (!datos.monto || datos.monto <= 0) return { ok: false, error: "El monto debe ser mayor a 0" };
+  const imputaciones = datos.imputaciones.filter((i) => i.remito_id && i.monto > 0).map((i) => ({ ...i, monto: Math.round(i.monto * 100) / 100 }));
+  const suma = imputaciones.reduce((a, i) => a + i.monto, 0);
+  if (suma > datos.monto + 0.009) return { ok: false, error: "Lo imputado a remitos supera el monto del pago" };
 
-  if (!cliente_id) redirect(errorA + "?error=" + encodeURIComponent("Elegí un cliente"));
-  if (!remito_id) redirect(errorA + "?error=" + encodeURIComponent("Elegí el remito que se está pagando"));
-  if (!monto || monto <= 0) redirect(errorA + "?error=" + encodeURIComponent("El monto debe ser mayor a 0"));
-
-  const { data: { user } } = await supabase.auth.getUser();
-  const { error } = await supabase.from("pagos").insert({
-    cliente_id,
-    remito_id,
-    monto,
-    medio: String(formData.get("medio") ?? "efectivo"),
-    referencia: String(formData.get("referencia") ?? "").trim() || null,
-    observaciones: String(formData.get("observaciones") ?? "").trim() || null,
-    usuario_id: user?.id,
-    // la fecha la pone la base automáticamente (hoy, hora Argentina)
+  const { data, error } = await supabase.rpc("crear_pago", {
+    p_cliente_id: datos.cliente_id,
+    p_monto: datos.monto,
+    p_medio: datos.medio || "efectivo",
+    p_referencia: datos.referencia || null,
+    p_observaciones: datos.observaciones || null,
+    p_imputaciones: imputaciones,
   });
-  if (error) redirect(errorA + "?error=" + encodeURIComponent(error.message));
+  if (error) return { ok: false, error: error.message };
   revalidatePath("/", "layout");
-  redirect(`/remitos/${remito_id}?ok=` + encodeURIComponent("Pago registrado"));
+  return { ok: true, id: data as string };
+}
+
+export async function imputarPago(pagoId: string, imputaciones: ImputacionNueva[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const lista = imputaciones.filter((i) => i.remito_id && i.monto > 0).map((i) => ({ ...i, monto: Math.round(i.monto * 100) / 100 }));
+  if (!lista.length) return { ok: false, error: "No elegiste ningún remito" };
+  const { error } = await supabase.rpc("imputar_pago", { p_pago_id: pagoId, p_imputaciones: lista });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function quitarImputacion(id: string, volverA: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("quitar_imputacion", { p_imputacion_id: id });
+  if (error) redirect(volverA + "?error=" + encodeURIComponent(error.message));
+  revalidatePath("/", "layout");
+  redirect(volverA + "?ok=" + encodeURIComponent("Imputación quitada: ese importe volvió a quedar a cuenta del cliente"));
 }
 
 export async function anularPago(id: string, volverA: string) {
