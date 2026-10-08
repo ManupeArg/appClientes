@@ -58,3 +58,29 @@ export async function enviarAlertaAhora() {
     redirect("/configuracion?error=" + encodeURIComponent("No se pudo llamar al endpoint de alertas: " + (e as Error).message));
   }
 }
+
+export async function guardarUnidad(formData: FormData) {
+  const supabase = await createClient();
+  const id = String(formData.get("id") ?? "");
+  const datos = {
+    nombre: String(formData.get("nombre") ?? "").trim(),
+    color: String(formData.get("color") ?? "#1f5eff"),
+    orden: parseInt(String(formData.get("orden") ?? "0"), 10) || 0,
+    activo: formData.get("activo") === "on",
+  };
+  if (!datos.nombre) redirect("/configuracion?error=" + encodeURIComponent("La unidad necesita un nombre"));
+  const { error } = id
+    ? await supabase.from("unidades_negocio").update(datos).eq("id", id)
+    : await supabase.from("unidades_negocio").insert({ ...datos, activo: true });
+  if (error) redirect("/configuracion?error=" + encodeURIComponent(error.message));
+  revalidatePath("/", "layout");
+  redirect("/configuracion?ok=" + encodeURIComponent("Unidad de negocio guardada"));
+}
+
+export async function completarUnidadRemitos() {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("completar_unidad_remitos");
+  if (error) redirect("/configuracion?error=" + encodeURIComponent(error.message));
+  revalidatePath("/", "layout");
+  redirect("/configuracion?ok=" + encodeURIComponent(`Se completó la unidad de negocio en ${data} remito/s viejos`));
+}

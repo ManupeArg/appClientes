@@ -7,14 +7,16 @@ import SubmitButton from "@/components/SubmitButton";
 import { actualizarProducto, ajustarStock } from "@/lib/actions/productos";
 import { createClient } from "@/lib/supabase/server";
 import { formatoNumero, formatoFecha } from "@/lib/utils";
+import { getUnidades } from "@/lib/unidades";
 
 export default async function ProductoDetallePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; ok?: string }> }) {
   const { id } = await params;
   const sp = await searchParams;
   const supabase = await createClient();
-  const [{ data: producto }, { data: movimientos }] = await Promise.all([
+  const [{ data: producto }, { data: movimientos }, unidades] = await Promise.all([
     supabase.from("productos").select("*").eq("id", id).single(),
     supabase.from("movimientos_stock").select("*").eq("producto_id", id).order("creado_en", { ascending: false }).limit(30),
+    getUnidades(supabase, false),
   ]);
   if (!producto) notFound();
   const bajo = producto.alerta_stock && Number(producto.stock) <= Number(producto.stock_minimo);
@@ -28,7 +30,7 @@ export default async function ProductoDetallePage({ params, searchParams }: { pa
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <ProductoForm action={actualizarProducto.bind(null, id)} producto={producto} />
+          <ProductoForm action={actualizarProducto.bind(null, id)} producto={producto} unidades={unidades} />
         </div>
         <div className="space-y-4">
           <div className="card" id="stock">
@@ -48,7 +50,7 @@ export default async function ProductoDetallePage({ params, searchParams }: { pa
               </div>
               <div>
                 <label className="label">Cantidad (negativo para restar)</label>
-                <input className="input" name="cantidad" type="number" step="0.01" required placeholder="Ej: 50 o -3" />
+                <input className="input" name="cantidad" type="number" step="1" inputMode="numeric" required placeholder="Ej: 50 o -3" />
               </div>
               <div>
                 <label className="label">Detalle</label>

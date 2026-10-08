@@ -19,7 +19,7 @@ function datosCliente(formData: FormData) {
     localidad: vacioANull(formData.get("localidad")),
     tipo_precio: String(formData.get("tipo_precio") ?? "minorista"),
     notas: vacioANull(formData.get("notas")),
-    activo: formData.get("activo") !== "off",
+    activo: formData.has("activo") ? formData.getAll("activo").includes("on") : true,
   };
 }
 

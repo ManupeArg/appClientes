@@ -1,5 +1,13 @@
 export type TipoPrecio = "minorista" | "mayorista";
 
+export interface UnidadNegocio {
+  id: string;
+  nombre: string;
+  color: string;
+  orden: number;
+  activo: boolean;
+}
+
 export interface Perfil {
   id: string;
   nombre: string;
@@ -36,12 +44,14 @@ export interface Producto {
   stock_minimo: number;
   alerta_stock: boolean;
   activo: boolean;
+  unidad_negocio_id: string | null;
 }
 
 export interface Remito {
   id: string;
   numero: number;
   cliente_id: string;
+  unidad_negocio_id: string | null;
   fecha: string;
   tipo_precio: TipoPrecio;
   subtotal: number;
@@ -50,6 +60,12 @@ export interface Remito {
   estado: "emitido" | "anulado";
   observaciones: string | null;
   creado_en: string;
+}
+
+export interface RemitoSaldo extends Remito {
+  pagado: number;
+  saldo: number;
+  estado_pago: "pendiente" | "parcial" | "pagado" | "anulado";
 }
 
 export interface RemitoItem {
@@ -65,6 +81,7 @@ export interface RemitoItem {
 export interface Pago {
   id: string;
   cliente_id: string;
+  remito_id: string | null;
   fecha: string;
   monto: number;
   medio: string;
@@ -84,5 +101,6 @@ export interface MovimientoCC {
   haber: number;
   remito_id: string | null;
   pago_id: string | null;
+  unidad_negocio_id: string | null;
   creado_en: string;
 }

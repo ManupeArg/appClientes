@@ -2,22 +2,31 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import Mensaje from "@/components/Mensaje";
 import BotonImprimir from "@/components/BotonImprimir";
+import EstadoPagoBadge from "@/components/EstadoPagoBadge";
 import { createClient } from "@/lib/supabase/server";
 import { anularRemito } from "@/lib/actions/remitos";
+import { anularPago } from "@/lib/actions/pagos";
+import { getUnidades, nombreUnidad } from "@/lib/unidades";
 import { formatoMoneda, formatoNumero, formatoFecha, numeroRemito } from "@/lib/utils";
+import type { Pago, RemitoSaldo } from "@/lib/types";
 
 export default async function RemitoDetallePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; ok?: string }> }) {
   const { id } = await params;
   const sp = await searchParams;
   const supabase = await createClient();
-  const [{ data: remito }, { data: items }, { data: config }] = await Promise.all([
-    supabase.from("remitos").select("*, clientes(*)").eq("id", id).single(),
+  const [{ data: remitoData }, { data: items }, { data: config }, { data: pagosData }, unidades] = await Promise.all([
+    supabase.from("remitos_saldo").select("*, clientes(*)").eq("id", id).single(),
     supabase.from("remito_items").select("*, productos(codigo, unidad)").eq("remito_id", id).order("descripcion"),
     supabase.from("configuracion").select("valor").eq("clave", "negocio").single(),
+    supabase.from("pagos").select("*").eq("remito_id", id).order("creado_en"),
+    getUnidades(supabase, false),
   ]);
-  if (!remito) notFound();
-  const cliente = remito.clientes as { nombre: string; cuit: string | null; direccion: string | null; localidad: string | null; telefono: string | null };
+  if (!remitoData) notFound();
+  const remito = remitoData as RemitoSaldo & { clientes: { nombre: string; cuit: string | null; direccion: string | null; localidad: string | null; telefono: string | null } };
+  const cliente = remito.clientes;
+  const pagos = (pagosData ?? []) as Pago[];
   const negocio = (config?.valor ?? {}) as { nombre?: string; cuit?: string; direccion?: string; telefono?: string; email?: string };
+  const pagosActivos = pagos.filter((p) => !p.anulado);
 
   return (
     <>
@@ -27,8 +36,11 @@ export default async function RemitoDetallePage({ params, searchParams }: { para
           <Link href={`/clientes/${remito.cliente_id}`} className="btn btn-secondary">Cuenta corriente</Link>
         </div>
         <div className="flex gap-2">
+          {remito.estado === "emitido" && Number(remito.saldo) > 0 && (
+            <Link href={`/pagos/nuevo?remito=${id}`} className="btn btn-primary">+ Registrar pago</Link>
+          )}
           <BotonImprimir />
-          {remito.estado === "emitido" && (
+          {remito.estado === "emitido" && pagosActivos.length === 0 && (
             <form action={anularRemito.bind(null, id)}>
               <button className="btn btn-danger" type="submit">Anular remito</button>
             </form>
@@ -36,6 +48,40 @@ export default async function RemitoDetallePage({ params, searchParams }: { para
         </div>
       </div>
       <Mensaje error={sp.error} ok={sp.ok} />
+
+      {remito.estado === "emitido" && (
+        <div className="card max-w-3xl mx-auto mb-4 no-print">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <EstadoPagoBadge estado={remito.estado_pago} />
+              <span className="text-sm">Pagado <strong>{formatoMoneda(remito.pagado)}</strong> · Pendiente <strong style={{ color: Number(remito.saldo) > 0 ? "var(--warn)" : "var(--ok)" }}>{formatoMoneda(remito.saldo)}</strong></span>
+            </div>
+            {pagosActivos.length > 0 && <span className="text-xs" style={{ color: "var(--muted)" }}>Para anular el remito, primero anulá sus pagos.</span>}
+          </div>
+          {pagos.length > 0 && (
+            <table className="table mt-3">
+              <thead><tr><th>Fecha</th><th>Medio</th><th>Referencia</th><th className="num">Monto</th><th></th></tr></thead>
+              <tbody>
+                {pagos.map((p) => (
+                  <tr key={p.id} style={{ opacity: p.anulado ? 0.5 : 1 }}>
+                    <td>{formatoFecha(p.fecha)}</td>
+                    <td className="capitalize">{p.medio}</td>
+                    <td className="text-sm">{p.referencia}{p.observaciones ? ` · ${p.observaciones}` : ""}</td>
+                    <td className="num font-semibold">{formatoMoneda(p.monto)}</td>
+                    <td className="text-right">
+                      {p.anulado ? <span className="badge badge-danger">anulado</span> : (
+                        <form action={anularPago.bind(null, p.id, `/remitos/${id}`)}>
+                          <button className="btn btn-danger btn-sm" type="submit">Anular</button>
+                        </form>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       <div className="card max-w-3xl mx-auto" style={{ padding: "2rem" }}>
         <div className="flex justify-between items-start border-b pb-4 mb-4" style={{ borderColor: "var(--border)" }}>
@@ -51,6 +97,7 @@ export default async function RemitoDetallePage({ params, searchParams }: { para
             <div className="text-xs uppercase font-bold tracking-wide" style={{ color: "var(--muted)" }}>Remito</div>
             <div className="text-2xl font-bold">{numeroRemito(remito.numero)}</div>
             <div className="text-sm">{formatoFecha(remito.fecha)}</div>
+            <div className="text-xs" style={{ color: "var(--muted)" }}>{nombreUnidad(unidades, remito.unidad_negocio_id)}</div>
             {remito.estado === "anulado" && <div className="badge badge-danger mt-1">ANULADO</div>}
           </div>
         </div>

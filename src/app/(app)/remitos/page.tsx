@@ -1,46 +1,60 @@
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
+import FiltroUnidad from "@/components/FiltroUnidad";
+import UnidadBadge from "@/components/UnidadBadge";
+import EstadoPagoBadge from "@/components/EstadoPagoBadge";
 import { createClient } from "@/lib/supabase/server";
+import { getUnidades } from "@/lib/unidades";
 import { formatoMoneda, formatoFecha, numeroRemito } from "@/lib/utils";
+import type { RemitoSaldo } from "@/lib/types";
 
-export default async function RemitosPage({ searchParams }: { searchParams: Promise<{ q?: string; desde?: string; hasta?: string }> }) {
+export default async function RemitosPage({ searchParams }: { searchParams: Promise<{ q?: string; desde?: string; hasta?: string; unidad?: string; pendientes?: string }> }) {
   const sp = await searchParams;
   const supabase = await createClient();
-  let query = supabase.from("remitos").select("*, clientes!inner(nombre)").order("numero", { ascending: false }).limit(200);
+  const unidades = await getUnidades(supabase, false);
+  let query = supabase.from("remitos_saldo").select("*, clientes!inner(nombre)").order("numero", { ascending: false }).limit(300);
   if (sp.q) query = query.ilike("clientes.nombre", `%${sp.q}%`);
   if (sp.desde) query = query.gte("fecha", sp.desde);
   if (sp.hasta) query = query.lte("fecha", sp.hasta);
-  const { data: remitos } = await query;
+  if (sp.unidad) query = query.eq("unidad_negocio_id", sp.unidad);
+  if (sp.pendientes) query = query.gt("saldo", 0);
+  const { data } = await query;
+  const remitos = (data ?? []) as (RemitoSaldo & { clientes: { nombre: string } })[];
+  const totalPendiente = remitos.reduce((a, r) => a + Number(r.saldo), 0);
 
   return (
     <>
-      <PageHeader titulo="Remitos" subtitulo="Ventas / entregas">
+      <PageHeader titulo="Remitos" subtitulo={`${remitos.length} remitos · pendiente de cobro en este listado: ${formatoMoneda(totalPendiente)}`}>
         <Link href="/remitos/nuevo" className="btn btn-primary">+ Nuevo remito</Link>
       </PageHeader>
-      <form className="flex flex-wrap gap-2 mb-4 no-print">
-        <input className="input max-w-xs" name="q" placeholder="Cliente…" defaultValue={sp.q ?? ""} />
-        <input className="input" style={{ width: 160 }} type="date" name="desde" defaultValue={sp.desde ?? ""} />
-        <input className="input" style={{ width: 160 }} type="date" name="hasta" defaultValue={sp.hasta ?? ""} />
-        <button className="btn btn-secondary">Filtrar</button>
-      </form>
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <FiltroUnidad unidades={unidades} actual={sp.unidad} base="/remitos" extra={{ q: sp.q, desde: sp.desde, hasta: sp.hasta, pendientes: sp.pendientes }} />
+        <form className="flex flex-wrap gap-2 no-print">
+          {sp.unidad && <input type="hidden" name="unidad" value={sp.unidad} />}
+          <input className="input max-w-xs" name="q" placeholder="Cliente…" defaultValue={sp.q ?? ""} />
+          <input className="input" style={{ width: 160 }} type="date" name="desde" defaultValue={sp.desde ?? ""} />
+          <input className="input" style={{ width: 160 }} type="date" name="hasta" defaultValue={sp.hasta ?? ""} />
+          <label className="flex items-center gap-1 text-sm"><input type="checkbox" name="pendientes" value="1" defaultChecked={!!sp.pendientes} /> solo con saldo</label>
+          <button className="btn btn-secondary">Filtrar</button>
+        </form>
+      </div>
       <div className="card p-0 overflow-x-auto">
         <table className="table">
-          <thead><tr><th>N°</th><th>Fecha</th><th>Cliente</th><th>Lista</th><th className="num">Total</th><th>Estado</th></tr></thead>
+          <thead><tr><th>N°</th><th>Fecha</th><th>Cliente</th><th>Unidad</th><th className="num">Total</th><th className="num">Pagado</th><th className="num">Pendiente</th><th>Estado</th></tr></thead>
           <tbody>
-            {(remitos ?? []).map((r) => {
-              const cli = r.clientes as unknown as { nombre: string };
-              return (
-                <tr key={r.id}>
-                  <td><Link className="underline font-medium" href={`/remitos/${r.id}`}>{numeroRemito(r.numero)}</Link></td>
-                  <td>{formatoFecha(r.fecha)}</td>
-                  <td><Link className="underline" href={`/clientes/${r.cliente_id}`}>{cli.nombre}</Link></td>
-                  <td className="capitalize">{r.tipo_precio}</td>
-                  <td className="num font-semibold">{formatoMoneda(r.total)}</td>
-                  <td>{r.estado === "anulado" ? <span className="badge badge-danger">anulado</span> : <span className="badge badge-ok">emitido</span>}</td>
-                </tr>
-              );
-            })}
-            {!remitos?.length && <tr><td colSpan={6} style={{ color: "var(--muted)" }}>No hay remitos.</td></tr>}
+            {remitos.map((r) => (
+              <tr key={r.id}>
+                <td><Link className="underline font-medium" href={`/remitos/${r.id}`}>{numeroRemito(r.numero)}</Link></td>
+                <td>{formatoFecha(r.fecha)}</td>
+                <td><Link className="underline" href={`/clientes/${r.cliente_id}`}>{r.clientes.nombre}</Link></td>
+                <td><UnidadBadge unidades={unidades} id={r.unidad_negocio_id} /></td>
+                <td className="num">{formatoMoneda(r.total)}</td>
+                <td className="num" style={{ color: "var(--ok)" }}>{Number(r.pagado) ? formatoMoneda(r.pagado) : ""}</td>
+                <td className="num font-semibold" style={{ color: Number(r.saldo) > 0 ? "var(--warn)" : undefined }}>{Number(r.saldo) > 0 ? formatoMoneda(r.saldo) : ""}</td>
+                <td><EstadoPagoBadge estado={r.estado_pago} /></td>
+              </tr>
+            ))}
+            {!remitos.length && <tr><td colSpan={8} style={{ color: "var(--muted)" }}>No hay remitos.</td></tr>}
           </tbody>
         </table>
       </div>

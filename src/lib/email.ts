@@ -7,6 +7,7 @@ interface ProductoBajo {
   unidad: string;
   stock: number;
   stock_minimo: number;
+  unidad_negocio?: string | null;
 }
 
 export async function enviarAlertaStock(destinatarios: string[], productos: ProductoBajo[]) {
@@ -19,7 +20,7 @@ export async function enviarAlertaStock(destinatarios: string[], productos: Prod
       (p) => `
       <tr>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:12px">${p.codigo ?? ""}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb"><a href="${app}/productos/${p.id}" style="color:#1f5eff;text-decoration:none">${p.nombre}</a></td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb"><a href="${app}/productos/${p.id}" style="color:#1f5eff;text-decoration:none">${p.nombre}</a>${p.unidad_negocio ? ` <span style="font-size:11px;color:#6b7280">· ${p.unidad_negocio}</span>` : ""}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;color:#d7263d;font-weight:700">${Number(p.stock)} ${p.unidad}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right">${Number(p.stock_minimo)}</td>
       </tr>`

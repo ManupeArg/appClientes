@@ -1,7 +1,7 @@
 import SubmitButton from "@/components/SubmitButton";
-import type { Producto } from "@/lib/types";
+import type { Producto, UnidadNegocio } from "@/lib/types";
 
-export default function ProductoForm({ action, producto }: { action: (fd: FormData) => Promise<void>; producto?: Producto }) {
+export default function ProductoForm({ action, producto, unidades }: { action: (fd: FormData) => Promise<void>; producto?: Producto; unidades: UnidadNegocio[] }) {
   return (
     <form action={action} className="card space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -20,6 +20,13 @@ export default function ProductoForm({ action, producto }: { action: (fd: FormDa
         <div>
           <label className="label">Categoría</label>
           <input className="input" name="categoria" defaultValue={producto?.categoria ?? ""} />
+        </div>
+        <div className="md:col-span-3">
+          <label className="label">Unidad de negocio *</label>
+          <select className="select" name="unidad_negocio_id" required defaultValue={producto?.unidad_negocio_id ?? ""}>
+            <option value="">— Elegí —</option>
+            {unidades.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+          </select>
         </div>
 
         <div>
@@ -42,12 +49,12 @@ export default function ProductoForm({ action, producto }: { action: (fd: FormDa
         {!producto && (
           <div>
             <label className="label">Stock inicial</label>
-            <input className="input" name="stock" type="number" step="0.01" defaultValue="0" />
+            <input className="input" name="stock" type="number" step="1" min="0" inputMode="numeric" defaultValue="0" />
           </div>
         )}
         <div>
           <label className="label">Stock mínimo (alerta)</label>
-          <input className="input" name="stock_minimo" type="number" step="0.01" min="0" defaultValue={producto?.stock_minimo ?? 0} />
+          <input className="input" name="stock_minimo" type="number" step="1" min="0" inputMode="numeric" defaultValue={producto?.stock_minimo ?? 0} />
         </div>
         <div className="md:col-span-3 flex flex-wrap gap-6">
           <label className="flex items-center gap-2 text-sm">

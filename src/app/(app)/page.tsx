@@ -1,20 +1,33 @@
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
+import UnidadBadge from "@/components/UnidadBadge";
+import EstadoPagoBadge from "@/components/EstadoPagoBadge";
 import { createClient } from "@/lib/supabase/server";
+import { getUnidades } from "@/lib/unidades";
 import { formatoMoneda, formatoNumero, formatoFecha, numeroRemito } from "@/lib/utils";
+import type { RemitoSaldo } from "@/lib/types";
 
 export default async function InicioPage() {
   const supabase = await createClient();
-  const [saldos, stockBajo, ultimosRemitos, ultimosPagos, ventasMes] = await Promise.all([
+  const primerDiaMes = new Date().toISOString().slice(0, 8) + "01";
+  const [unidades, saldosUnidad, saldos, stockBajo, ultimosRemitos, ultimosPagos, ventasMes] = await Promise.all([
+    getUnidades(supabase),
+    supabase.from("saldos_clientes_unidad").select("unidad_negocio_id, saldo"),
     supabase.from("saldos_clientes").select("*").gt("saldo", 0).order("saldo", { ascending: false }).limit(8),
     supabase.from("productos_stock_bajo").select("*").limit(10),
-    supabase.from("remitos").select("id, numero, fecha, total, estado, clientes(nombre)").order("creado_en", { ascending: false }).limit(6),
+    supabase.from("remitos_saldo").select("id, numero, fecha, total, saldo, estado_pago, unidad_negocio_id, clientes(nombre)").order("creado_en", { ascending: false }).limit(6),
     supabase.from("pagos").select("id, fecha, monto, medio, clientes(nombre)").eq("anulado", false).order("creado_en", { ascending: false }).limit(6),
-    supabase.from("remitos").select("total").eq("estado", "emitido").gte("fecha", new Date().toISOString().slice(0, 8) + "01"),
+    supabase.from("remitos").select("total, unidad_negocio_id").eq("estado", "emitido").gte("fecha", primerDiaMes),
   ]);
 
-  const totalDeuda = (saldos.data ?? []).reduce((a, s) => a + Number(s.saldo), 0);
+  const resumen = unidades.map((u) => ({
+    u,
+    ventas: (ventasMes.data ?? []).filter((r) => r.unidad_negocio_id === u.id).reduce((a, r) => a + Number(r.total), 0),
+    cantidad: (ventasMes.data ?? []).filter((r) => r.unidad_negocio_id === u.id).length,
+    deuda: (saldosUnidad.data ?? []).filter((s) => s.unidad_negocio_id === u.id).reduce((a, s) => a + Math.max(0, Number(s.saldo)), 0),
+  }));
   const totalMes = (ventasMes.data ?? []).reduce((a, r) => a + Number(r.total), 0);
+  const totalDeuda = (saldosUnidad.data ?? []).reduce((a, s) => a + Math.max(0, Number(s.saldo)), 0);
 
   return (
     <>
@@ -23,21 +36,31 @@ export default async function InicioPage() {
         <Link href="/pagos/nuevo" className="btn btn-secondary">+ Registrar pago</Link>
       </PageHeader>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <div className="card">
-          <div className="label">Ventas del mes</div>
-          <div className="text-2xl font-bold">{formatoMoneda(totalMes)}</div>
-          <div className="text-xs" style={{ color: "var(--muted)" }}>{ventasMes.data?.length ?? 0} remitos emitidos</div>
-        </div>
-        <div className="card">
-          <div className="label">A cobrar (deuda de clientes)</div>
-          <div className="text-2xl font-bold" style={{ color: totalDeuda > 0 ? "var(--warn)" : "var(--ok)" }}>{formatoMoneda(totalDeuda)}</div>
-          <div className="text-xs" style={{ color: "var(--muted)" }}>{saldos.data?.length ?? 0} clientes con saldo</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        {resumen.map(({ u, ventas, cantidad, deuda }) => (
+          <div key={u.id} className="card" style={{ borderTop: `3px solid ${u.color}` }}>
+            <div className="font-bold mb-2" style={{ color: u.color }}>{u.nombre}</div>
+            <div className="label">Ventas del mes</div>
+            <div className="text-xl font-bold">{formatoMoneda(ventas)}</div>
+            <div className="text-xs mb-2" style={{ color: "var(--muted)" }}>{cantidad} remitos</div>
+            <div className="label">A cobrar</div>
+            <div className="text-xl font-bold" style={{ color: deuda > 0 ? "var(--warn)" : "var(--ok)" }}>{formatoMoneda(deuda)}</div>
+            <Link href={`/remitos?unidad=${u.id}&pendientes=1`} className="text-xs underline" style={{ color: "var(--muted)" }}>ver remitos pendientes</Link>
+          </div>
+        ))}
+        <div className="card" style={{ background: "#141c2e", color: "#fff", borderColor: "#141c2e" }}>
+          <div className="font-bold mb-2">Total</div>
+          <div className="label" style={{ color: "#8a97b3" }}>Ventas del mes</div>
+          <div className="text-xl font-bold">{formatoMoneda(totalMes)}</div>
+          <div className="text-xs mb-2" style={{ color: "#8a97b3" }}>{ventasMes.data?.length ?? 0} remitos</div>
+          <div className="label" style={{ color: "#8a97b3" }}>A cobrar</div>
+          <div className="text-xl font-bold">{formatoMoneda(totalDeuda)}</div>
         </div>
         <div className="card">
           <div className="label">Productos con stock bajo</div>
-          <div className="text-2xl font-bold" style={{ color: (stockBajo.data?.length ?? 0) > 0 ? "var(--danger)" : "var(--ok)" }}>{stockBajo.data?.length ?? 0}</div>
+          <div className="text-3xl font-bold" style={{ color: (stockBajo.data?.length ?? 0) > 0 ? "var(--danger)" : "var(--ok)" }}>{stockBajo.data?.length ?? 0}</div>
           <div className="text-xs" style={{ color: "var(--muted)" }}>por debajo de su mínimo</div>
+          <Link href="/productos?bajo=1" className="text-xs underline" style={{ color: "var(--muted)" }}>ver listado</Link>
         </div>
       </div>
 
@@ -63,11 +86,12 @@ export default async function InicioPage() {
           <h2 className="font-semibold mb-3">Stock bajo</h2>
           {stockBajo.data?.length ? (
             <table className="table">
-              <thead><tr><th>Producto</th><th className="num">Stock</th><th className="num">Mínimo</th></tr></thead>
+              <thead><tr><th>Producto</th><th>Unidad</th><th className="num">Stock</th><th className="num">Mínimo</th></tr></thead>
               <tbody>
                 {stockBajo.data.map((p) => (
                   <tr key={p.id}>
                     <td><Link className="underline" href={`/productos/${p.id}`}>{p.nombre}</Link></td>
+                    <td><UnidadBadge unidades={unidades} id={p.unidad_negocio_id} /></td>
                     <td className="num font-semibold" style={{ color: "var(--danger)" }}>{formatoNumero(p.stock)} {p.unidad}</td>
                     <td className="num">{formatoNumero(p.stock_minimo)}</td>
                   </tr>
@@ -80,20 +104,18 @@ export default async function InicioPage() {
         <div className="card">
           <h2 className="font-semibold mb-3">Últimos remitos</h2>
           <table className="table">
-            <thead><tr><th>N°</th><th>Fecha</th><th>Cliente</th><th className="num">Total</th></tr></thead>
+            <thead><tr><th>N°</th><th>Fecha</th><th>Cliente</th><th className="num">Total</th><th></th></tr></thead>
             <tbody>
-              {(ultimosRemitos.data ?? []).map((r) => {
-                const cli = r.clientes as unknown as { nombre: string } | null;
-                return (
-                  <tr key={r.id}>
-                    <td><Link className="underline" href={`/remitos/${r.id}`}>{numeroRemito(r.numero)}</Link>{r.estado === "anulado" && <span className="badge badge-danger ml-2">anulado</span>}</td>
-                    <td>{formatoFecha(r.fecha)}</td>
-                    <td>{cli?.nombre}</td>
-                    <td className="num">{formatoMoneda(r.total)}</td>
-                  </tr>
-                );
-              })}
-              {!ultimosRemitos.data?.length && <tr><td colSpan={4} style={{ color: "var(--muted)" }}>Todavía no hay remitos.</td></tr>}
+              {((ultimosRemitos.data ?? []) as unknown as (RemitoSaldo & { clientes: { nombre: string } | null })[]).map((r) => (
+                <tr key={r.id}>
+                  <td><Link className="underline" href={`/remitos/${r.id}`}>{numeroRemito(r.numero)}</Link></td>
+                  <td>{formatoFecha(r.fecha)}</td>
+                  <td>{r.clientes?.nombre} <UnidadBadge unidades={unidades} id={r.unidad_negocio_id} /></td>
+                  <td className="num">{formatoMoneda(r.total)}</td>
+                  <td><EstadoPagoBadge estado={r.estado_pago} /></td>
+                </tr>
+              ))}
+              {!ultimosRemitos.data?.length && <tr><td colSpan={5} style={{ color: "var(--muted)" }}>Todavía no hay remitos.</td></tr>}
             </tbody>
           </table>
         </div>

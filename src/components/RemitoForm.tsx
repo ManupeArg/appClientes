@@ -2,9 +2,10 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Combobox from "@/components/Combobox";
 import { crearRemito } from "@/lib/actions/remitos";
-import { formatoMoneda, formatoNumero, hoyISO } from "@/lib/utils";
-import type { Cliente, Producto, TipoPrecio } from "@/lib/types";
+import { formatoMoneda, formatoNumero, formatoFecha, hoyISO } from "@/lib/utils";
+import type { Cliente, Producto, TipoPrecio, UnidadNegocio } from "@/lib/types";
 
 interface Linea {
   key: number;
@@ -13,26 +14,69 @@ interface Linea {
   precio_unitario: number;
 }
 
-export default function RemitoForm({ clientes, productos, clienteInicial }: { clientes: Cliente[]; productos: Producto[]; clienteInicial?: string }) {
+export default function RemitoForm({
+  clientes,
+  productos,
+  unidades,
+  clienteInicial,
+  unidadInicial,
+}: {
+  clientes: Cliente[];
+  productos: Producto[];
+  unidades: UnidadNegocio[];
+  clienteInicial?: string;
+  unidadInicial?: string;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   const [clienteId, setClienteId] = useState(clienteInicial ?? "");
   const clienteSel = clientes.find((c) => c.id === clienteId);
+  const [unidadId, setUnidadId] = useState(unidadInicial ?? (unidades.length === 1 ? unidades[0].id : ""));
   const [tipoPrecio, setTipoPrecio] = useState<TipoPrecio>(clienteSel?.tipo_precio ?? "minorista");
-  const [fecha, setFecha] = useState(hoyISO());
   const [descuento, setDescuento] = useState(0);
   const [observaciones, setObservaciones] = useState("");
   const [lineas, setLineas] = useState<Linea[]>([{ key: 1, producto_id: "", cantidad: 1, precio_unitario: 0 }]);
-  const [busqueda, setBusqueda] = useState("");
 
   const precioDe = (p: Producto, tipo: TipoPrecio) => Number(tipo === "mayorista" ? p.precio_mayorista : p.precio_minorista);
+
+  // Productos de la unidad elegida (los que todavía no tienen unidad asignada también se muestran)
+  const productosUnidad = useMemo(
+    () => (unidadId ? productos.filter((p) => !p.unidad_negocio_id || p.unidad_negocio_id === unidadId) : productos),
+    [productos, unidadId]
+  );
+
+  const opcionesClientes = useMemo(
+    () => clientes.map((c) => ({ value: c.id, label: c.nombre, sub: c.localidad ?? undefined, keywords: [c.cuit, c.telefono].filter(Boolean).join(" ") })),
+    [clientes]
+  );
+  const opcionesProductos = useMemo(
+    () =>
+      productosUnidad.map((p) => ({
+        value: p.id,
+        label: p.nombre,
+        sub: `${p.codigo ? p.codigo + " · " : ""}stock ${formatoNumero(p.stock)} · ${formatoMoneda(precioDe(p, tipoPrecio))}`,
+        keywords: [p.codigo, p.categoria].filter(Boolean).join(" "),
+      })),
+    [productosUnidad, tipoPrecio]
+  );
 
   function cambiarCliente(id: string) {
     setClienteId(id);
     const c = clientes.find((x) => x.id === id);
     if (c) cambiarTipoPrecio(c.tipo_precio);
+  }
+
+  function cambiarUnidad(id: string) {
+    setUnidadId(id);
+    // Sacar de las líneas los productos que no son de esta unidad
+    setLineas((ls) =>
+      ls.map((l) => {
+        const p = productos.find((x) => x.id === l.producto_id);
+        return p && p.unidad_negocio_id && p.unidad_negocio_id !== id ? { ...l, producto_id: "", precio_unitario: 0 } : l;
+      })
+    );
   }
 
   function cambiarTipoPrecio(tipo: TipoPrecio) {
@@ -65,23 +109,19 @@ export default function RemitoForm({ clientes, productos, clienteInicial }: { cl
   const subtotal = useMemo(() => lineas.reduce((a, l) => a + l.cantidad * l.precio_unitario, 0), [lineas]);
   const total = Math.max(0, subtotal - (descuento || 0));
 
-  const productosFiltrados = useMemo(() => {
-    const q = busqueda.trim().toLowerCase();
-    if (!q) return productos;
-    return productos.filter((p) => p.nombre.toLowerCase().includes(q) || (p.codigo ?? "").toLowerCase().includes(q));
-  }, [busqueda, productos]);
-
   const sinStock = lineas.some((l) => {
     const p = productos.find((x) => x.id === l.producto_id);
     return p && Number(p.stock) < l.cantidad;
   });
+
+  const puedeGuardar = !!clienteId && !!unidadId && lineas.some((l) => l.producto_id && l.cantidad > 0);
 
   function guardar() {
     setError(null);
     startTransition(async () => {
       const res = await crearRemito({
         cliente_id: clienteId,
-        fecha,
+        unidad_negocio_id: unidadId,
         tipo_precio: tipoPrecio,
         descuento: descuento || 0,
         observaciones,
@@ -96,38 +136,54 @@ export default function RemitoForm({ clientes, productos, clienteInicial }: { cl
     <div className="space-y-4">
       {error && <div className="alert-error">{error}</div>}
 
-      <div className="card grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="md:col-span-2">
-          <label className="label">Cliente *</label>
-          <select className="select" value={clienteId} onChange={(e) => cambiarCliente(e.target.value)}>
-            <option value="">— Elegí un cliente —</option>
-            {clientes.map((c) => (
-              <option key={c.id} value={c.id}>{c.nombre}</option>
+      <div className="card space-y-4">
+        <div>
+          <label className="label">Unidad de negocio *</label>
+          <div className="flex flex-wrap gap-2">
+            {unidades.map((u) => (
+              <button
+                key={u.id}
+                type="button"
+                className="btn"
+                style={
+                  unidadId === u.id
+                    ? { background: u.color, color: "#fff", borderColor: u.color }
+                    : { background: "#fff", color: u.color, borderColor: u.color }
+                }
+                onClick={() => cambiarUnidad(u.id)}
+              >
+                {u.nombre}
+              </button>
             ))}
-          </select>
+            {unidades.length === 0 && <span className="text-sm" style={{ color: "var(--danger)" }}>No hay unidades de negocio cargadas. Agregalas en Configuración.</span>}
+          </div>
         </div>
-        <div>
-          <label className="label">Lista de precios</label>
-          <select className="select" value={tipoPrecio} onChange={(e) => cambiarTipoPrecio(e.target.value as TipoPrecio)}>
-            <option value="minorista">Minorista</option>
-            <option value="mayorista">Mayorista</option>
-          </select>
-        </div>
-        <div>
-          <label className="label">Fecha</label>
-          <input className="input" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="md:col-span-2">
+            <label className="label">Cliente *</label>
+            <Combobox opciones={opcionesClientes} value={clienteId} onChange={cambiarCliente} placeholder="Nombre, CUIT o teléfono…" autoFocus={!clienteInicial} />
+          </div>
+          <div>
+            <label className="label">Lista de precios</label>
+            <select className="select" value={tipoPrecio} onChange={(e) => cambiarTipoPrecio(e.target.value as TipoPrecio)}>
+              <option value="minorista">Minorista</option>
+              <option value="mayorista">Mayorista</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Fecha</label>
+            <div className="input" style={{ background: "#f3f4f6" }}>{formatoFecha(hoyISO())}</div>
+          </div>
         </div>
       </div>
 
       <div className="card">
-        <div className="flex items-center justify-between mb-3 gap-3">
-          <h2 className="font-semibold">Productos</h2>
-          <input className="input max-w-xs" placeholder="Filtrar productos del desplegable…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
-        </div>
-        <div className="overflow-x-auto">
+        <h2 className="font-semibold mb-3">Productos</h2>
+        {!unidadId && <p className="text-sm mb-2" style={{ color: "var(--muted)" }}>Elegí primero la unidad de negocio para ver sus productos.</p>}
+        <div>
           <table className="table">
             <thead>
-              <tr><th style={{ width: "45%" }}>Producto</th><th className="num">Stock</th><th className="num" style={{ width: 110 }}>Cantidad</th><th className="num" style={{ width: 140 }}>Precio unit.</th><th className="num">Subtotal</th><th></th></tr>
+              <tr><th style={{ width: "48%" }}>Producto</th><th className="num">Stock</th><th className="num" style={{ width: 100 }}>Cantidad</th><th className="num" style={{ width: 140 }}>Precio unit.</th><th className="num">Subtotal</th><th></th></tr>
             </thead>
             <tbody>
               {lineas.map((l) => {
@@ -135,16 +191,21 @@ export default function RemitoForm({ clientes, productos, clienteInicial }: { cl
                 const falta = p && Number(p.stock) < l.cantidad;
                 return (
                   <tr key={l.key}>
-                    <td>
-                      <select className="select" value={l.producto_id} onChange={(e) => elegirProducto(l.key, e.target.value)}>
-                        <option value="">— Elegí —</option>
-                        {(p && !productosFiltrados.includes(p) ? [p, ...productosFiltrados] : productosFiltrados).map((x) => (
-                          <option key={x.id} value={x.id}>{x.codigo ? `[${x.codigo}] ` : ""}{x.nombre}</option>
-                        ))}
-                      </select>
+                    <td style={{ overflow: "visible" }}>
+                      <Combobox opciones={opcionesProductos} value={l.producto_id} onChange={(v) => elegirProducto(l.key, v)} placeholder="Nombre o código…" disabled={!unidadId} />
                     </td>
                     <td className="num text-sm" style={{ color: falta ? "var(--danger)" : "var(--muted)" }}>{p ? `${formatoNumero(p.stock)} ${p.unidad}` : ""}</td>
-                    <td><input className="input num" type="number" min="0.01" step="0.01" value={l.cantidad} onChange={(e) => setLinea(l.key, { cantidad: parseFloat(e.target.value) || 0 })} /></td>
+                    <td>
+                      <input
+                        className="input num"
+                        type="number"
+                        min="1"
+                        step="1"
+                        inputMode="numeric"
+                        value={l.cantidad}
+                        onChange={(e) => setLinea(l.key, { cantidad: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                      />
+                    </td>
                     <td><input className="input num" type="number" min="0" step="0.01" value={l.precio_unitario} onChange={(e) => setLinea(l.key, { precio_unitario: parseFloat(e.target.value) || 0 })} /></td>
                     <td className="num font-semibold">{formatoMoneda(l.cantidad * l.precio_unitario)}</td>
                     <td><button type="button" className="btn btn-danger btn-sm" onClick={() => quitarLinea(l.key)}>✕</button></td>
@@ -170,7 +231,7 @@ export default function RemitoForm({ clientes, productos, clienteInicial }: { cl
             <input className="input num" style={{ width: 120 }} type="number" min="0" step="0.01" value={descuento} onChange={(e) => setDescuento(parseFloat(e.target.value) || 0)} />
           </div>
           <div className="flex justify-between text-lg font-bold border-t pt-2" style={{ borderColor: "var(--border)" }}><span>Total</span><span>{formatoMoneda(total)}</span></div>
-          <button type="button" className="btn btn-primary w-full justify-center mt-2" disabled={pending || !clienteId} onClick={guardar}>
+          <button type="button" className="btn btn-primary w-full justify-center mt-2" disabled={pending || !puedeGuardar} onClick={guardar}>
             {pending ? "Guardando…" : "Emitir remito"}
           </button>
         </div>
